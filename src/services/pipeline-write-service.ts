@@ -114,10 +114,18 @@ export class PipelineWriteService {
         reissuedAtomIds: [],
       };
     }
+    const bundleForApply =
+      bundle?.bundleStatus === "error"
+        ? {
+            ...bundle,
+            bundleStatus: "applying" as const,
+            applyError: undefined,
+          }
+        : bundle;
     const outlineSummary = this.toOutlineSummary(envelope.topicId, bundleId, sourceDraftVersion);
     const outlineMap = this.toOutlineMap(envelope.topicId, rootNodeId);
-    const descHtml = this.toBundleDescHtml(envelope.topicId, bundleId, sourceDraftVersion, bundle);
-    const sourceAtomIds = bundle?.sourceAtomIds ?? [];
+    const descHtml = this.toBundleDescHtml(envelope.topicId, bundleId, sourceDraftVersion, bundleForApply);
+    const sourceAtomIds = bundleForApply?.sourceAtomIds ?? [];
     const atoms = sourceAtomIds.length
       ? await this.atomRepository.getByIds(envelope.workspaceId, envelope.topicId, sourceAtomIds)
       : [];
@@ -135,7 +143,7 @@ export class PipelineWriteService {
         atomTitle: atom.title,
         atomClaim: atom.claim,
         fallbackNodeId,
-        schemaVersion: bundle?.schemaVersion,
+        schemaVersion: bundleForApply?.schemaVersion,
       });
       return {
         atom,
@@ -427,9 +435,15 @@ export class PipelineWriteService {
     const atomCount = bundle?.atomCount ?? 0;
     const sourceInputId = bundle?.sourceInputId ?? "n/a";
     const bundleStatus = bundle?.bundleStatus ?? "created";
+    const applyErrorCode = bundle?.applyError?.code;
+    const applyErrorMessage = bundle?.applyError?.message;
     const escapedTopicId = this.escapeHtml(topicId);
     const escapedBundleId = this.escapeHtml(bundleId);
     const escapedInputId = this.escapeHtml(sourceInputId);
+    const escapedApplyErrorCode = applyErrorCode ? this.escapeHtml(applyErrorCode) : undefined;
+    const escapedApplyErrorMessage = applyErrorMessage
+      ? this.escapeHtml(applyErrorMessage)
+      : undefined;
 
     return [
       "<!doctype html>",
@@ -448,6 +462,12 @@ export class PipelineWriteService {
       `      <li>Atom count: ${atomCount}</li>`,
       `      <li>Source input: ${escapedInputId}</li>`,
       `      <li>Bundle status: ${bundleStatus}</li>`,
+      ...(escapedApplyErrorCode
+        ? [
+            `      <li>Apply error code: ${escapedApplyErrorCode}</li>`,
+            `      <li>Apply error message: ${escapedApplyErrorMessage ?? ""}</li>`,
+          ]
+        : []),
       "    </ul>",
       "  </body>",
       "</html>",

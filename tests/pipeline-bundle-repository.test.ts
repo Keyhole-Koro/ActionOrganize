@@ -76,4 +76,68 @@ describe("PipelineBundleRepository.tryStartApply", () => {
     expect(snapshot.get("applyingTraceId")).toBe("trace-new");
     expect(snapshot.get("bundleStatus")).toBe("applying");
   });
+
+  it("returns structured applyError from snapshot", async () => {
+    const bundleId = `bundle-error-${Date.now()}`;
+    createdBundleIds.push(bundleId);
+
+    await repository.docRef(workspaceId, topicId, bundleId).set({
+      bundleId,
+      topicId,
+      sourceDraftVersion: 2,
+      schemaVersion: 3,
+      atomCount: 1,
+      bundleStatus: "error",
+      applyError: {
+        code: "artifact_write_failed",
+        message: "gcs unavailable",
+      },
+    });
+
+    const snapshot = await repository.get(workspaceId, topicId, bundleId);
+
+    expect(snapshot).toMatchObject({
+      bundleId,
+      bundleStatus: "error",
+      applyError: {
+        code: "artifact_write_failed",
+        message: "gcs unavailable",
+      },
+    });
+  });
+
+  it("retries from error status and clears previous applyError", async () => {
+    const bundleId = `bundle-retry-${Date.now()}`;
+    createdBundleIds.push(bundleId);
+
+    await repository.docRef(workspaceId, topicId, bundleId).set({
+      bundleId,
+      topicId,
+      sourceDraftVersion: 3,
+      schemaVersion: 4,
+      atomCount: 2,
+      bundleStatus: "error",
+      applyError: {
+        code: "artifact_write_failed",
+        message: "gcs unavailable",
+      },
+    });
+
+    const acquired = await repository.tryStartApply(
+      workspaceId,
+      topicId,
+      bundleId,
+      "trace-retry",
+      1000,
+    );
+
+    expect(acquired).toBe(true);
+
+    const snapshot = await repository.get(workspaceId, topicId, bundleId);
+    expect(snapshot).toMatchObject({
+      bundleId,
+      bundleStatus: "applying",
+    });
+    expect(snapshot?.applyError).toBeUndefined();
+  });
 });

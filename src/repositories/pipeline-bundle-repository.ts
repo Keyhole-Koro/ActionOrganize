@@ -25,6 +25,10 @@ export type PipelineBundleSnapshot = {
   bundleStatus: "created" | "applying" | "applied" | "error";
   descStatus: "pending" | "described" | "error";
   appliedAt?: unknown;
+  applyError?: {
+    code: string;
+    message: string;
+  };
   descVersion: number;
 };
 
@@ -81,6 +85,7 @@ export class PipelineBundleRepository {
         {
           bundleStatus: "applied",
           appliedAt: FieldValue.serverTimestamp(),
+          applyError: FieldValue.delete(),
           applyingAt: FieldValue.delete(),
           applyingTraceId: FieldValue.delete(),
           updatedAt: FieldValue.serverTimestamp(),
@@ -118,6 +123,7 @@ export class PipelineBundleRepository {
         ref,
         {
           bundleStatus: "applying",
+          applyError: FieldValue.delete(),
           applyingAt: FieldValue.serverTimestamp(),
           applyingTraceId: traceId,
           updatedAt: FieldValue.serverTimestamp(),
@@ -196,6 +202,7 @@ export class PipelineBundleRepository {
     const bundleStatus = snapshot.get("bundleStatus");
     const descStatus = snapshot.get("descStatus");
     const appliedAt = snapshot.get("appliedAt");
+    const applyError = snapshot.get("applyError");
     const descVersion = snapshot.get("descVersion");
 
     return {
@@ -215,6 +222,19 @@ export class PipelineBundleRepository {
       descStatus:
         descStatus === "described" || descStatus === "error" ? descStatus : "pending",
       appliedAt,
+      applyError:
+        applyError && typeof applyError === "object"
+          ? {
+              code:
+                typeof (applyError as { code?: unknown }).code === "string"
+                  ? (applyError as { code: string }).code
+                  : "unknown_error",
+              message:
+                typeof (applyError as { message?: unknown }).message === "string"
+                  ? (applyError as { message: string }).message
+                  : "",
+            }
+          : undefined,
       descVersion: typeof descVersion === "number" ? descVersion : 0,
     };
   }
