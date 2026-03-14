@@ -12,6 +12,7 @@ import { TopicRepository } from "../repositories/topic-repository.js";
 import { BundleDescriptionRepository } from "../repositories/bundle-description-repository.js";
 import { EdgeRepository } from "../repositories/edge-repository.js";
 import { AtomRepository } from "../repositories/atom-repository.js";
+import { dedupeNodeIds, resolveNodeId } from "./cleaner-entity-resolution.js";
 
 type DraftBundleResult = {
   bundleId: string;
@@ -78,6 +79,7 @@ export class PipelineWriteService {
   ): Promise<OutlineApplyResult> {
     const rootNodeId = `node:${envelope.topicId}:root`;
     const descRef = this.toBundleDescRef(bundleId, sourceDraftVersion);
+    const outlineRef = this.toOutlineRef(envelope.topicId, sourceDraftVersion);
 
     if (!this.isFirestoreBackend()) {
       return {
@@ -89,6 +91,8 @@ export class PipelineWriteService {
     }
 
     const bundle = await this.bundleRepository.get(envelope.workspaceId, envelope.topicId, bundleId);
+    const outlineSummary = this.toOutlineSummary(envelope.topicId, bundleId, sourceDraftVersion);
+    const outlineMap = this.toOutlineMap(envelope.topicId, rootNodeId);
     const descHtml = this.toBundleDescHtml(envelope.topicId, bundleId, sourceDraftVersion, bundle);
     const sourceAtomIds = bundle?.sourceAtomIds ?? [];
     const atoms = sourceAtomIds.length
@@ -98,14 +102,27 @@ export class PipelineWriteService {
       .filter((atom) => atom.confidence < 0.5 || atom.claim.trim().length === 0)
       .map((atom) => atom.atomId);
     const candidateAtoms = atoms.filter((atom) => !reissuedAtomIds.includes(atom.atomId));
-    const candidateNodeIds = candidateAtoms.map((atom) => this.toAtomNodeId(envelope.topicId, atom.atomId));
-    const changedNodeIds = [rootNodeId, ...candidateNodeIds];
+    const existingClaimNodes = await this.nodeRepository.listClaimNodes(
+      envelope.workspaceId,
+      envelope.topicId,
+    );
+    const resolvedCandidates = candidateAtoms.map((atom) => {
+      const fallbackNodeId = this.toAtomNodeId(envelope.topicId, atom.atomId);
+      const resolvedNodeId = resolveNodeId(existingClaimNodes, atom.title, fallbackNodeId);
+      return {
+        atom,
+        nodeId: resolvedNodeId,
+        isMerged: existingClaimNodes.some((existing) => existing.nodeId === resolvedNodeId),
+      };
+    });
+    const changedNodeIds = dedupeNodeIds([rootNodeId, ...resolvedCandidates.map((item) => item.nodeId)]);
 
     try {
       await this.bundleDescriptionRepository.writeHtml(descRef, descHtml);
+      await this.bundleDescriptionRepository.writeMarkdown(outlineRef, `${outlineSummary}\n\n${outlineMap}`);
     } catch (error) {
       throw new TemporaryDependencyError(
-        `failed to write bundle description: ${error instanceof Error ? error.message : "unknown error"}`,
+        `failed to write bundle/outline artifacts: ${error instanceof Error ? error.message : "unknown error"}`,
       );
     }
 
@@ -121,8 +138,8 @@ export class PipelineWriteService {
         workspaceId: envelope.workspaceId,
         topicId: envelope.topicId,
         version: nextOutlineVersion,
-        summaryMd: this.toOutlineSummary(envelope.topicId, bundleId, sourceDraftVersion),
-        mapMd: this.toOutlineMap(envelope.topicId, rootNodeId),
+        summaryMd: outlineSummary,
+        mapMd: outlineMap,
       });
 
       tx.set(
@@ -131,6 +148,7 @@ export class PipelineWriteService {
           workspaceId: envelope.workspaceId,
           topicId: envelope.topicId,
           latestOutlineVersion: nextOutlineVersion,
+          latestOutlineRef: outlineRef,
           updatedAt: FieldValue.serverTimestamp(),
           createdAt: FieldValue.serverTimestamp(),
         },
@@ -148,17 +166,19 @@ export class PipelineWriteService {
         contextSummary: `Outline v${nextOutlineVersion} generated from ${bundleId}`,
       });
 
-      for (const atom of candidateAtoms) {
-        const atomNodeId = this.toAtomNodeId(envelope.topicId, atom.atomId);
+      for (const candidate of resolvedCandidates) {
+        const atomNodeId = candidate.nodeId;
         this.nodeRepository.write(tx, {
           workspaceId: envelope.workspaceId,
           topicId: envelope.topicId,
           nodeId: atomNodeId,
           kind: "claim",
-          title: atom.title,
+          title: candidate.atom.title,
           parentId: rootNodeId,
           schemaVersion,
-          contextSummary: atom.claim,
+          contextSummary: candidate.isMerged
+            ? `Merged from bundle ${bundleId}: ${candidate.atom.claim}`
+            : candidate.atom.claim,
         });
         this.edgeRepository.write(tx, {
           workspaceId: envelope.workspaceId,
@@ -238,9 +258,20 @@ export class PipelineWriteService {
       ),
     );
 
+    const mapRef = this.toMapRef(envelope.topicId, outlineVersion);
+    const mapMarkdown = this.toMapMarkdown(envelope.topicId, outlineVersion, changedNodeIds);
+    try {
+      await this.bundleDescriptionRepository.writeMarkdown(mapRef, mapMarkdown);
+    } catch (error) {
+      throw new TemporaryDependencyError(
+        `failed to write map artifact: ${error instanceof Error ? error.message : "unknown error"}`,
+      );
+    }
+
     await topicRef.set(
       {
         latestMapVersion: outlineVersion,
+        latestMapRef: mapRef,
         updatedAt: FieldValue.serverTimestamp(),
       },
       { merge: true },
@@ -313,8 +344,26 @@ export class PipelineWriteService {
     ].join("\n");
   }
 
+  private toMapMarkdown(topicId: string, outlineVersion: number, changedNodeIds: string[]) {
+    return [
+      `# Map ${topicId}`,
+      "",
+      `Outline version: ${outlineVersion}`,
+      "",
+      ...changedNodeIds.map((nodeId) => `- ${nodeId}`),
+    ].join("\n");
+  }
+
   private toBundleDescRef(bundleId: string, version: number) {
     return `mind/bundle_desc/${bundleId}/v${version}.html`;
+  }
+
+  private toOutlineRef(topicId: string, version: number) {
+    return `mind/outlines/${topicId}/v${version}.md`;
+  }
+
+  private toMapRef(topicId: string, version: number) {
+    return `mind/maps/${topicId}/v${version}.md`;
   }
 
   private toAtomNodeId(topicId: string, atomId: string) {

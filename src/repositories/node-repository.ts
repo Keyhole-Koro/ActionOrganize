@@ -15,6 +15,11 @@ export type NodeRecord = {
   rollupWatermark?: number;
 };
 
+export type NodeCandidate = {
+  nodeId: string;
+  title: string;
+};
+
 export class NodeRepository {
   private readonly firestore = getFirestore();
 
@@ -61,5 +66,18 @@ export class NodeRepository {
       },
       { merge: true },
     );
+  }
+
+  async listClaimNodes(workspaceId: string, topicId: string, limit = 500): Promise<NodeCandidate[]> {
+    const snapshot = await this.firestore
+      .collection(`workspaces/${workspaceId}/topics/${topicId}/nodes`)
+      .where("kind", "==", "claim")
+      .limit(limit)
+      .get();
+
+    return snapshot.docs.map((doc) => ({
+      nodeId: doc.id,
+      title: typeof doc.get("title") === "string" ? doc.get("title") : doc.id,
+    }));
   }
 }

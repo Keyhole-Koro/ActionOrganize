@@ -272,6 +272,14 @@ class BundleDescribedHandler implements AgentHandler {
   }
 }
 
+class AtomReissuedHandler implements AgentHandler {
+  readonly eventType = "atom.reissued";
+
+  async handle(): Promise<AgentResult> {
+    return { ack: true, emittedEvents: [] };
+  }
+}
+
 class TopicSchemaUpdatedHandler implements AgentHandler {
   readonly eventType = "topic.schema_updated";
 
@@ -360,6 +368,14 @@ class NodeRollupRequestedHandler implements AgentHandler {
   }
 }
 
+class NodeRollupUpdatedHandler implements AgentHandler {
+  readonly eventType = "node.rollup.updated";
+
+  async handle(): Promise<AgentResult> {
+    return { ack: true, emittedEvents: [] };
+  }
+}
+
 class TopicMetricsUpdatedHandler implements AgentHandler {
   readonly eventType = "topic.metrics.updated";
 
@@ -391,9 +407,11 @@ export const pipelineHandlers: AgentHandler[] = [
   new DraftUpdatedHandler(),
   new BundleCreatedHandler(),
   new BundleDescribedHandler(),
+  new AtomReissuedHandler(),
   new TopicSchemaUpdatedHandler(),
   new OutlineUpdatedHandler(),
   new TopicNodeChangedHandler(),
   new NodeRollupRequestedHandler(),
+  new NodeRollupUpdatedHandler(),
   new TopicMetricsUpdatedHandler(),
 ];

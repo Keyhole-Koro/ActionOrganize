@@ -1,3 +1,4 @@
+import type { Bucket } from "@google-cloud/storage";
 import { env } from "../config/env.js";
 import { getStorage } from "../core/storage.js";
 
@@ -15,7 +16,17 @@ export class BundleDescriptionRepository {
     return path;
   }
 
-  private async ensureBucket(bucket: ReturnType<Storage["bucket"]>) {
+  async writeMarkdown(path: string, markdown: string): Promise<string> {
+    const bucket = this.storage.bucket(env.ORGANIZE_GCS_BUCKET);
+    await this.ensureBucket(bucket);
+    await bucket.file(path).save(markdown, {
+      contentType: "text/markdown; charset=utf-8",
+      resumable: false,
+    });
+    return path;
+  }
+
+  private async ensureBucket(bucket: Bucket) {
     if (this.bucketReady) {
       return;
     }
