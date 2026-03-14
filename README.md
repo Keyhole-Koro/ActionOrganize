@@ -20,6 +20,7 @@ PORT=8090 \
 GOOGLE_CLOUD_PROJECT=local-dev \
 FIRESTORE_EMULATOR_HOST=localhost:8081 \
 STORAGE_EMULATOR_HOST=http://localhost:4443 \
+ORGANIZE_GCS_BUCKET=organize-local \
 PUBSUB_EMULATOR_HOST=localhost:8085 \
 PUBSUB_TOPIC_NAME=mind-events \
 STATE_BACKEND=memory \
@@ -73,6 +74,7 @@ Required:
   * `true` or `false`
 * `FIRESTORE_EMULATOR_HOST`
 * `STORAGE_EMULATOR_HOST`
+* `ORGANIZE_GCS_BUCKET`
 * `LEASE_TTL_SECONDS`
   * positive integer
 * `VERTEX_USE_REAL_API`

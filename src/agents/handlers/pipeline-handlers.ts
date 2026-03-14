@@ -217,6 +217,15 @@ class BundleCreatedHandler implements AgentHandler {
       ack: true,
       emittedEvents: [
         {
+          type: "bundle.described",
+          topicId: envelope.topicId,
+          idempotencyKey: `type:bundle.described/topicId:${envelope.topicId}/bundleId:${bundleId}`,
+          payload: {
+            topicId: envelope.topicId,
+            bundleId,
+          },
+        },
+        {
           type: "outline.updated",
           topicId: envelope.topicId,
           orderingKey: envelope.topicId,
@@ -234,11 +243,20 @@ class BundleCreatedHandler implements AgentHandler {
   }
 }
 
+class BundleDescribedHandler implements AgentHandler {
+  readonly eventType = "bundle.described";
+
+  async handle(): Promise<AgentResult> {
+    return { ack: true, emittedEvents: [] };
+  }
+}
+
 class TopicSchemaUpdatedHandler implements AgentHandler {
   readonly eventType = "topic.schema_updated";
 
   async handle({ envelope }: AgentContext): Promise<AgentResult> {
-    requireNumber(envelope.payload, "schemaVersion");
+    const schemaVersion = requireNumber(envelope.payload, "schemaVersion");
+    await pipelineWriteService.onTopicSchemaUpdated(envelope, schemaVersion);
     return { ack: true, emittedEvents: [] };
   }
 }
@@ -340,6 +358,7 @@ export const pipelineHandlers: AgentHandler[] = [
   new TopicResolvedHandler(),
   new DraftUpdatedHandler(),
   new BundleCreatedHandler(),
+  new BundleDescribedHandler(),
   new TopicSchemaUpdatedHandler(),
   new OutlineUpdatedHandler(),
   new TopicNodeChangedHandler(),

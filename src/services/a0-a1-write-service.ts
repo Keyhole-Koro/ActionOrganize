@@ -44,6 +44,16 @@ export class A0A1WriteService {
       return;
     }
 
+    await this.inputProgressRepository.advance({
+      workspaceId: envelope.workspaceId,
+      topicId: envelope.topicId,
+      inputId,
+      status: "atomizing",
+      currentPhase: "A1_ATOMIZER",
+      lastEventType: envelope.type,
+      traceId: envelope.traceId,
+    });
+
     await this.inputRepository.upsert({
       workspaceId: envelope.workspaceId,
       topicId: envelope.topicId,

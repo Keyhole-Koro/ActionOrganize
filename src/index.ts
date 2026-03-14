@@ -17,6 +17,7 @@ server.listen(env.PORT, "0.0.0.0", () => {
       pubsubPublishEnabled: env.PUBSUB_PUBLISH_ENABLED,
       firestoreEmulatorHost: env.FIRESTORE_EMULATOR_HOST,
       storageEmulatorHost: env.STORAGE_EMULATOR_HOST,
+      organizeGcsBucket: env.ORGANIZE_GCS_BUCKET,
       leaseTtlSeconds: env.LEASE_TTL_SECONDS,
       vertexUseRealApi: env.VERTEX_USE_REAL_API,
     },

@@ -7,6 +7,7 @@ import { NodeRepository } from "../repositories/node-repository.js";
 import { OutlineRepository } from "../repositories/outline-repository.js";
 import { PipelineBundleRepository } from "../repositories/pipeline-bundle-repository.js";
 import { TopicRepository } from "../repositories/topic-repository.js";
+import { BundleDescriptionRepository } from "../repositories/bundle-description-repository.js";
 
 type DraftBundleResult = {
   bundleId: string;
@@ -25,6 +26,7 @@ export class PipelineWriteService {
   private readonly nodeRepository = new NodeRepository();
   private readonly indexItemRepository = new IndexItemRepository();
   private readonly inputProgressRepository = new InputProgressRepository();
+  private readonly bundleDescriptionRepository = new BundleDescriptionRepository();
 
   private isFirestoreBackend() {
     return env.STATE_BACKEND === "firestore";
@@ -67,10 +69,14 @@ export class PipelineWriteService {
   ): Promise<OutlineApplyResult> {
     const rootNodeId = `node:${envelope.topicId}:root`;
     const changedNodeIds = [rootNodeId];
+    const descRef = this.toBundleDescRef(bundleId, sourceDraftVersion);
+    const descHtml = this.toBundleDescHtml(envelope.topicId, bundleId, sourceDraftVersion);
 
     if (!this.isFirestoreBackend()) {
       return { outlineVersion: sourceDraftVersion, changedNodeIds };
     }
+
+    await this.bundleDescriptionRepository.writeHtml(descRef, descHtml);
 
     const firestore = this.topicRepository.firestoreClient;
     const topicRef = this.topicRepository.docRef(envelope.workspaceId, envelope.topicId);
@@ -115,6 +121,12 @@ export class PipelineWriteService {
     });
 
     await this.bundleRepository.markApplied(envelope.workspaceId, envelope.topicId, bundleId);
+    await this.bundleRepository.markDescribed(
+      envelope.workspaceId,
+      envelope.topicId,
+      bundleId,
+      descRef,
+    );
 
     if (inputId) {
       await this.inputProgressRepository.advance({
@@ -196,6 +208,31 @@ export class PipelineWriteService {
     });
   }
 
+  async onTopicSchemaUpdated(envelope: EventEnvelope, schemaVersion: number) {
+    if (!this.isFirestoreBackend()) {
+      return;
+    }
+
+    const topicRef = this.topicRepository.docRef(envelope.workspaceId, envelope.topicId);
+    await this.topicRepository.firestoreClient.runTransaction(async (tx) => {
+      const snapshot = await tx.get(topicRef);
+      const current = snapshot.get("schemaVersion");
+      const currentVersion = typeof current === "number" ? current : 1;
+      if (schemaVersion <= currentVersion) {
+        return;
+      }
+
+      tx.set(
+        topicRef,
+        {
+          schemaVersion,
+          updatedAt: FieldValue.serverTimestamp(),
+        },
+        { merge: true },
+      );
+    });
+  }
+
   private toOutlineSummary(topicId: string, bundleId: string, sourceDraftVersion: number) {
     return [
       `# Outline ${topicId}`,
@@ -210,6 +247,28 @@ export class PipelineWriteService {
       `# Map ${topicId}`,
       "",
       `- ${rootNodeId}`,
+    ].join("\n");
+  }
+
+  private toBundleDescRef(bundleId: string, version: number) {
+    return `mind/bundle_desc/${bundleId}/v${version}.html`;
+  }
+
+  private toBundleDescHtml(topicId: string, bundleId: string, sourceDraftVersion: number) {
+    return [
+      "<!doctype html>",
+      '<html lang="en">',
+      "  <head>",
+      '    <meta charset="utf-8" />',
+      '    <meta name="viewport" content="width=device-width, initial-scale=1" />',
+      "    <title>Pipeline Bundle Description</title>",
+      "  </head>",
+      "  <body>",
+      `    <h1>Bundle ${bundleId}</h1>`,
+      `    <p>Topic: ${topicId}</p>`,
+      `    <p>Source draft version: ${sourceDraftVersion}</p>`,
+      "  </body>",
+      "</html>",
     ].join("\n");
   }
 }

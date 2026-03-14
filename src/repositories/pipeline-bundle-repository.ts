@@ -9,6 +9,8 @@ export type PipelineBundleRecord = {
   schemaVersion: number;
   atomCount: number;
   sourceInputId?: string;
+  bundleStatus?: "created" | "applied" | "error";
+  descStatus?: "pending" | "described" | "error";
 };
 
 export class PipelineBundleRepository {
@@ -29,6 +31,8 @@ export class PipelineBundleRepository {
         schemaVersion: record.schemaVersion,
         atomCount: record.atomCount,
         sourceInputId: record.sourceInputId,
+        bundleStatus: record.bundleStatus ?? "created",
+        descStatus: record.descStatus ?? "pending",
         updatedAt: FieldValue.serverTimestamp(),
         createdAt: FieldValue.serverTimestamp(),
       },
@@ -39,7 +43,19 @@ export class PipelineBundleRepository {
   async markApplied(workspaceId: string, topicId: string, bundleId: string) {
     await this.docRef(workspaceId, topicId, bundleId).set(
       {
+        bundleStatus: "applied",
         appliedAt: FieldValue.serverTimestamp(),
+        updatedAt: FieldValue.serverTimestamp(),
+      },
+      { merge: true },
+    );
+  }
+
+  async markDescribed(workspaceId: string, topicId: string, bundleId: string, descRef: string) {
+    await this.docRef(workspaceId, topicId, bundleId).set(
+      {
+        descStatus: "described",
+        descRef,
         updatedAt: FieldValue.serverTimestamp(),
       },
       { merge: true },
