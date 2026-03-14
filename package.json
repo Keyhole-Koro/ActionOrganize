@@ -7,7 +7,9 @@
     "dev": "tsx watch src/index.ts",
     "build": "tsc -p tsconfig.json",
     "start": "node dist/index.js",
-    "typecheck": "tsc --noEmit -p tsconfig.json"
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "PORT=8090 STATE_BACKEND=firestore GOOGLE_CLOUD_PROJECT=test-project PUBSUB_EMULATOR_HOST=localhost:8085 PUBSUB_TOPIC_NAME=mind-events PUBSUB_PUBLISH_ENABLED=false FIRESTORE_EMULATOR_HOST=localhost:8081 STORAGE_EMULATOR_HOST=http://localhost:4443 ORGANIZE_GCS_BUCKET=test-bucket LEASE_TTL_SECONDS=120 VERTEX_USE_REAL_API=false vitest run",
+    "test:watch": "PORT=8090 STATE_BACKEND=firestore GOOGLE_CLOUD_PROJECT=test-project PUBSUB_EMULATOR_HOST=localhost:8085 PUBSUB_TOPIC_NAME=mind-events PUBSUB_PUBLISH_ENABLED=false FIRESTORE_EMULATOR_HOST=localhost:8081 STORAGE_EMULATOR_HOST=http://localhost:4443 ORGANIZE_GCS_BUCKET=test-bucket LEASE_TTL_SECONDS=120 VERTEX_USE_REAL_API=false vitest"
   },
   "dependencies": {
     "@google-cloud/firestore": "^7.11.3",
