@@ -1,4 +1,5 @@
 import { InvalidEventError } from "../../core/errors.js";
+import { A0A1WriteService } from "../../services/a0-a1-write-service.js";
 import type { AgentContext, AgentHandler, AgentResult } from "../types.js";
 
 type Payload = Record<string, unknown>;
@@ -38,11 +39,15 @@ function optionalString(payload: Payload, key: string): string | undefined {
   return value;
 }
 
+const writeService = new A0A1WriteService();
+
 class MediaReceivedHandler implements AgentHandler {
   readonly eventType = "media.received";
 
   async handle({ envelope }: AgentContext): Promise<AgentResult> {
     const inputId = requireString(envelope.payload, "inputId");
+
+    await writeService.onMediaReceived(envelope, inputId);
 
     return {
       ack: true,
@@ -63,6 +68,8 @@ class InputReceivedHandler implements AgentHandler {
   async handle({ envelope }: AgentContext): Promise<AgentResult> {
     const inputId = requireString(envelope.payload, "inputId");
     const atomIds = [`atom:${envelope.topicId}:${inputId}:0`];
+
+    await writeService.onInputReceived(envelope, inputId, atomIds);
 
     return {
       ack: true,
@@ -111,6 +118,9 @@ class TopicResolvedHandler implements AgentHandler {
     const resolvedTopicId = requireString(envelope.payload, "resolvedTopicId");
     const inputId = requireString(envelope.payload, "inputId");
     const atomIds = requireStringArray(envelope.payload, "atomIds");
+    const resolutionMode = requireString(envelope.payload, "resolutionMode");
+
+    await writeService.onTopicResolved(envelope, inputId, resolvedTopicId, resolutionMode);
 
     return {
       ack: true,

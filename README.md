@@ -31,6 +31,20 @@ npm run dev
   * Pub/Sub push 互換のリクエストを受けます
   * `message.data` は base64 化した Organize envelope JSON を想定します
 
+## Current Scope
+
+現在は次まで実装済みです。
+
+* event intake
+* event ledger / lease
+* emitted event publish
+* A0/A1 相当の最小 write path
+  * `inputs/{inputId}`
+  * `atoms/{atomId}`
+  * `inputProgress/{inputId}`
+
+`STATE_BACKEND=memory` では ledger / lease / handler の動作確認ができ、`STATE_BACKEND=firestore` では Firestore への永続化を行います。
+
 ## Environment
 
 * `PORT` default: `8090`
