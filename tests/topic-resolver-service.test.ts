@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { env } from "../src/config/env.js";
 import { TemporaryDependencyError } from "../src/core/errors.js";
+import { logger } from "../src/lib/logger.js";
 import type { EventEnvelope } from "../src/models/envelope.js";
 import { TopicResolverService } from "../src/services/topic-resolver-service.js";
 
@@ -26,6 +27,7 @@ describe("TopicResolverService", () => {
 
   it("uses deterministic resolution when real API is disabled", async () => {
     env.VERTEX_USE_REAL_API = false;
+    const infoSpy = vi.spyOn(logger, "info").mockImplementation(() => logger);
 
     const service = new TopicResolverService();
     (
@@ -51,11 +53,20 @@ describe("TopicResolverService", () => {
 
     expect(result.resolutionMode).toBe("existing");
     expect(result.resolvedTopicId).toBe("tp-ai");
+    expect(infoSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        resolverMode: "deterministic",
+        resolutionMode: "existing",
+      }),
+      "topic resolved",
+    );
   });
 
   it("uses Gemini decision when real API is enabled", async () => {
     env.VERTEX_USE_REAL_API = true;
     env.GEMINI_API_KEY = "dummy-key";
+    env.GEMINI_MODEL = "gemini-3-flash";
+    const infoSpy = vi.spyOn(logger, "info").mockImplementation(() => logger);
 
     const service = new TopicResolverService();
     (
@@ -105,6 +116,14 @@ describe("TopicResolverService", () => {
     expect(result.resolutionMode).toBe("existing");
     expect(result.resolvedTopicId).toBe("tp-1");
     expect(result.resolutionConfidence).toBe(0.91);
+    expect(infoSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        resolverMode: "gemini",
+        geminiModel: "gemini-3-flash",
+        resolutionMode: "existing",
+      }),
+      "topic resolved",
+    );
   });
 
   it("throws retryable error when Gemini request fails", async () => {

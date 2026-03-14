@@ -208,7 +208,12 @@ class BundleCreatedHandler implements AgentHandler {
     const bundleId = requireString(envelope.payload, "bundleId");
     const sourceDraftVersion = requireNumber(envelope.payload, "sourceDraftVersion");
     const inputId = optionalString(envelope.payload, "inputId");
-    const { outlineVersion, changedNodeIds, descRef } = await pipelineWriteService.onBundleCreated(
+    const {
+      outlineVersion,
+      changedNodeIds,
+      descRef,
+      reissuedAtomIds = [],
+    } = await pipelineWriteService.onBundleCreated(
       envelope,
       bundleId,
       sourceDraftVersion,
@@ -241,6 +246,16 @@ class BundleCreatedHandler implements AgentHandler {
             inputId,
           },
         },
+        ...reissuedAtomIds.map((atomId) => ({
+          type: "atom.reissued",
+          topicId: envelope.topicId,
+          idempotencyKey: `type:atom.reissued/topicId:${envelope.topicId}/atomId:${atomId}/bundleId:${bundleId}`,
+          payload: {
+            topicId: envelope.topicId,
+            atomId,
+            reason: "schema_incompatible_or_low_confidence",
+          },
+        })),
       ],
     };
   }
@@ -327,8 +342,21 @@ class NodeRollupRequestedHandler implements AgentHandler {
   async handle({ envelope }: AgentContext): Promise<AgentResult> {
     const nodeId = requireString(envelope.payload, "nodeId");
     const generation = requireNumber(envelope.payload, "generation");
-    await pipelineWriteService.onNodeRollupRequested(envelope, nodeId, generation);
-    return { ack: true, emittedEvents: [] };
+    const result = await pipelineWriteService.onNodeRollupRequested(envelope, nodeId, generation);
+    return {
+      ack: true,
+      emittedEvents: [
+        {
+          type: "node.rollup.updated",
+          topicId: result.topicId,
+          idempotencyKey: `type:node.rollup.updated/topicId:${result.topicId}/nodeId:${result.nodeId}/generation:${generation}`,
+          payload: {
+            topicId: result.topicId,
+            nodeId: result.nodeId,
+          },
+        },
+      ],
+    };
   }
 }
 

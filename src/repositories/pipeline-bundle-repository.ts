@@ -8,6 +8,7 @@ export type PipelineBundleRecord = {
   sourceDraftVersion: number;
   schemaVersion: number;
   atomCount: number;
+  sourceAtomIds?: string[];
   sourceInputId?: string;
   bundleStatus?: "created" | "applied" | "error";
   descStatus?: "pending" | "described" | "error";
@@ -19,6 +20,7 @@ export type PipelineBundleSnapshot = {
   sourceDraftVersion: number;
   schemaVersion: number;
   atomCount: number;
+  sourceAtomIds: string[];
   sourceInputId?: string;
   bundleStatus: "created" | "applied" | "error";
   descStatus: "pending" | "described" | "error";
@@ -41,6 +43,7 @@ export class PipelineBundleRepository {
         sourceDraftVersion: record.sourceDraftVersion,
         schemaVersion: record.schemaVersion,
         atomCount: record.atomCount,
+        sourceAtomIds: record.sourceAtomIds,
         sourceInputId: record.sourceInputId,
         bundleStatus: record.bundleStatus ?? "created",
         descStatus: record.descStatus ?? "pending",
@@ -87,6 +90,7 @@ export class PipelineBundleRepository {
     const sourceDraftVersion = snapshot.get("sourceDraftVersion");
     const schemaVersion = snapshot.get("schemaVersion");
     const atomCount = snapshot.get("atomCount");
+    const sourceAtomIds = snapshot.get("sourceAtomIds");
     const sourceInputId = snapshot.get("sourceInputId");
     const bundleStatus = snapshot.get("bundleStatus");
     const descStatus = snapshot.get("descStatus");
@@ -97,6 +101,9 @@ export class PipelineBundleRepository {
       sourceDraftVersion: typeof sourceDraftVersion === "number" ? sourceDraftVersion : 1,
       schemaVersion: typeof schemaVersion === "number" ? schemaVersion : 1,
       atomCount: typeof atomCount === "number" ? atomCount : 0,
+      sourceAtomIds: Array.isArray(sourceAtomIds)
+        ? sourceAtomIds.filter((value): value is string => typeof value === "string" && value.length > 0)
+        : [],
       sourceInputId: typeof sourceInputId === "string" ? sourceInputId : undefined,
       bundleStatus:
         bundleStatus === "applied" || bundleStatus === "error" ? bundleStatus : "created",

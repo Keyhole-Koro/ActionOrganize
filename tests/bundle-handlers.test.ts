@@ -94,4 +94,38 @@ describe("bundle handlers", () => {
     );
     expect(result).toEqual({ ack: true, emittedEvents: [] });
   });
+
+  it("emits atom.reissued when cleaner flags unresolved atoms", async () => {
+    onBundleCreatedMock.mockResolvedValue({
+      outlineVersion: 8,
+      changedNodeIds: ["node-1"],
+      descRef: "mind/bundle_desc/bundle-2/v8.html",
+      reissuedAtomIds: ["atom-9"],
+    });
+
+    const { pipelineHandlers } = await import("../src/agents/handlers/pipeline-handlers.js");
+    const handler = pipelineHandlers.find((h) => h.eventType === "bundle.created");
+    expect(handler).toBeDefined();
+
+    const envelope = makeEnvelope("bundle.created", {
+      bundleId: "bundle-2",
+      sourceDraftVersion: 8,
+      inputId: "input-2",
+    });
+
+    const result = await handler!.handle({ envelope, attributes: {} });
+
+    expect(result.emittedEvents).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: "atom.reissued",
+          topicId: "topic-1",
+          payload: expect.objectContaining({
+            atomId: "atom-9",
+            reason: "schema_incompatible_or_low_confidence",
+          }),
+        }),
+      ]),
+    );
+  });
 });

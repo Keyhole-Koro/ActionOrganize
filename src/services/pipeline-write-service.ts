@@ -10,6 +10,8 @@ import { PipelineBundleRepository } from "../repositories/pipeline-bundle-reposi
 import type { PipelineBundleSnapshot } from "../repositories/pipeline-bundle-repository.js";
 import { TopicRepository } from "../repositories/topic-repository.js";
 import { BundleDescriptionRepository } from "../repositories/bundle-description-repository.js";
+import { EdgeRepository } from "../repositories/edge-repository.js";
+import { AtomRepository } from "../repositories/atom-repository.js";
 
 type DraftBundleResult = {
   bundleId: string;
@@ -20,6 +22,7 @@ type OutlineApplyResult = {
   outlineVersion: number;
   changedNodeIds: string[];
   descRef: string;
+  reissuedAtomIds: string[];
 };
 
 export class PipelineWriteService {
@@ -30,6 +33,8 @@ export class PipelineWriteService {
   private readonly indexItemRepository = new IndexItemRepository();
   private readonly inputProgressRepository = new InputProgressRepository();
   private readonly bundleDescriptionRepository = new BundleDescriptionRepository();
+  private readonly edgeRepository = new EdgeRepository();
+  private readonly atomRepository = new AtomRepository();
 
   private isFirestoreBackend() {
     return env.STATE_BACKEND === "firestore";
@@ -58,6 +63,7 @@ export class PipelineWriteService {
       sourceDraftVersion: draftVersion,
       schemaVersion,
       atomCount: appendedAtomIds.length,
+      sourceAtomIds: appendedAtomIds,
       sourceInputId: inputId,
     });
 
@@ -71,15 +77,29 @@ export class PipelineWriteService {
     inputId?: string,
   ): Promise<OutlineApplyResult> {
     const rootNodeId = `node:${envelope.topicId}:root`;
-    const changedNodeIds = [rootNodeId];
     const descRef = this.toBundleDescRef(bundleId, sourceDraftVersion);
 
     if (!this.isFirestoreBackend()) {
-      return { outlineVersion: sourceDraftVersion, changedNodeIds, descRef };
+      return {
+        outlineVersion: sourceDraftVersion,
+        changedNodeIds: [rootNodeId],
+        descRef,
+        reissuedAtomIds: [],
+      };
     }
 
     const bundle = await this.bundleRepository.get(envelope.workspaceId, envelope.topicId, bundleId);
     const descHtml = this.toBundleDescHtml(envelope.topicId, bundleId, sourceDraftVersion, bundle);
+    const sourceAtomIds = bundle?.sourceAtomIds ?? [];
+    const atoms = sourceAtomIds.length
+      ? await this.atomRepository.getByIds(envelope.workspaceId, envelope.topicId, sourceAtomIds)
+      : [];
+    const reissuedAtomIds = atoms
+      .filter((atom) => atom.confidence < 0.5 || atom.claim.trim().length === 0)
+      .map((atom) => atom.atomId);
+    const candidateAtoms = atoms.filter((atom) => !reissuedAtomIds.includes(atom.atomId));
+    const candidateNodeIds = candidateAtoms.map((atom) => this.toAtomNodeId(envelope.topicId, atom.atomId));
+    const changedNodeIds = [rootNodeId, ...candidateNodeIds];
 
     try {
       await this.bundleDescriptionRepository.writeHtml(descRef, descHtml);
@@ -128,6 +148,29 @@ export class PipelineWriteService {
         contextSummary: `Outline v${nextOutlineVersion} generated from ${bundleId}`,
       });
 
+      for (const atom of candidateAtoms) {
+        const atomNodeId = this.toAtomNodeId(envelope.topicId, atom.atomId);
+        this.nodeRepository.write(tx, {
+          workspaceId: envelope.workspaceId,
+          topicId: envelope.topicId,
+          nodeId: atomNodeId,
+          kind: "claim",
+          title: atom.title,
+          parentId: rootNodeId,
+          schemaVersion,
+          contextSummary: atom.claim,
+        });
+        this.edgeRepository.write(tx, {
+          workspaceId: envelope.workspaceId,
+          topicId: envelope.topicId,
+          edgeId: this.toEdgeId(rootNodeId, atomNodeId),
+          sourceNodeId: rootNodeId,
+          targetNodeId: atomNodeId,
+          relationType: "contains",
+          schemaVersion,
+        });
+      }
+
       return nextOutlineVersion;
     });
 
@@ -146,7 +189,7 @@ export class PipelineWriteService {
       });
     }
 
-    return { outlineVersion, changedNodeIds, descRef };
+    return { outlineVersion, changedNodeIds, descRef, reissuedAtomIds };
   }
 
   async onBundleDescribed(envelope: EventEnvelope, bundleId: string, descRef: string) {
@@ -208,9 +251,9 @@ export class PipelineWriteService {
     envelope: EventEnvelope,
     nodeId: string,
     generation: number,
-  ) {
+  ): Promise<{ topicId: string; nodeId: string }> {
     if (!this.isFirestoreBackend()) {
-      return;
+      return { topicId: envelope.topicId, nodeId };
     }
 
     await this.nodeRepository.upsert({
@@ -224,6 +267,8 @@ export class PipelineWriteService {
       contextSummary: `Rollup generated for ${nodeId} at generation ${generation}`,
       detailHtml: `<section><h1>${nodeId}</h1><p>Rollup generation ${generation}</p></section>`,
     });
+
+    return { topicId: envelope.topicId, nodeId };
   }
 
   async onTopicSchemaUpdated(envelope: EventEnvelope, schemaVersion: number) {
@@ -270,6 +315,14 @@ export class PipelineWriteService {
 
   private toBundleDescRef(bundleId: string, version: number) {
     return `mind/bundle_desc/${bundleId}/v${version}.html`;
+  }
+
+  private toAtomNodeId(topicId: string, atomId: string) {
+    return `node:${topicId}:atom:${atomId}`;
+  }
+
+  private toEdgeId(sourceNodeId: string, targetNodeId: string) {
+    return `edge:${sourceNodeId}->${targetNodeId}`;
   }
 
   private toBundleDescHtml(

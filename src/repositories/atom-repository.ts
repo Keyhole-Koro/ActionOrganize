@@ -53,6 +53,9 @@ export class AtomRepository {
           atomId: atomIds[index],
           title: typeof snapshot.get("title") === "string" ? snapshot.get("title") : atomIds[index],
           claim: typeof snapshot.get("claim") === "string" ? snapshot.get("claim") : "",
+          confidence: typeof snapshot.get("confidence") === "number" ? snapshot.get("confidence") : 0,
+          sourceInputId:
+            typeof snapshot.get("sourceInputId") === "string" ? snapshot.get("sourceInputId") : undefined,
         },
       ];
     });
