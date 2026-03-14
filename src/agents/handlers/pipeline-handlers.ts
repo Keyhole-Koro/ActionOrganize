@@ -1,5 +1,6 @@
 import { InvalidEventError } from "../../core/errors.js";
 import { A0A1WriteService } from "../../services/a0-a1-write-service.js";
+import { A2DraftAppenderService } from "../../services/a2-draft-appender-service.js";
 import type { AgentContext, AgentHandler, AgentResult } from "../types.js";
 
 type Payload = Record<string, unknown>;
@@ -40,6 +41,7 @@ function optionalString(payload: Payload, key: string): string | undefined {
 }
 
 const writeService = new A0A1WriteService();
+const draftAppenderService = new A2DraftAppenderService();
 
 class MediaReceivedHandler implements AgentHandler {
   readonly eventType = "media.received";
@@ -121,6 +123,13 @@ class TopicResolvedHandler implements AgentHandler {
     const resolutionMode = requireString(envelope.payload, "resolutionMode");
 
     await writeService.onTopicResolved(envelope, inputId, resolvedTopicId, resolutionMode);
+    const { draftVersion } = await draftAppenderService.appendDraft(
+      envelope,
+      resolvedTopicId,
+      inputId,
+      atomIds,
+      resolutionMode,
+    );
 
     return {
       ack: true,
@@ -131,7 +140,7 @@ class TopicResolvedHandler implements AgentHandler {
           orderingKey: resolvedTopicId,
           payload: {
             topicId: resolvedTopicId,
-            draftVersion: 1,
+            draftVersion,
             appendedAtomIds: atomIds,
             inputId,
           },

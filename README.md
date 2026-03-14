@@ -38,10 +38,12 @@ npm run dev
 * event intake
 * event ledger / lease
 * emitted event publish
-* A0/A1 相当の最小 write path
+* A0/A1/A2 相当の最小 write path
   * `inputs/{inputId}`
   * `atoms/{atomId}`
   * `inputProgress/{inputId}`
+  * `topics/{topicId}.latestDraftVersion`
+  * `drafts/{version}`
 
 `STATE_BACKEND=memory` では ledger / lease / handler の動作確認ができ、`STATE_BACKEND=firestore` では Firestore への永続化を行います。
 
