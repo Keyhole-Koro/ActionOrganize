@@ -1,6 +1,7 @@
 import { InvalidEventError } from "../../core/errors.js";
 import { A0A1WriteService } from "../../services/a0-a1-write-service.js";
 import { A2DraftAppenderService } from "../../services/a2-draft-appender-service.js";
+import { A5BalancerService } from "../../services/a5-balancer-service.js";
 import { PipelineWriteService } from "../../services/pipeline-write-service.js";
 import { TopicResolverService } from "../../services/topic-resolver-service.js";
 import type { AgentContext, AgentHandler, AgentResult } from "../types.js";
@@ -44,6 +45,7 @@ function optionalString(payload: Payload, key: string): string | undefined {
 
 const writeService = new A0A1WriteService();
 const draftAppenderService = new A2DraftAppenderService();
+const a5BalancerService = new A5BalancerService();
 const pipelineWriteService = new PipelineWriteService();
 const topicResolverService = new TopicResolverService();
 
@@ -334,23 +336,21 @@ class TopicMetricsUpdatedHandler implements AgentHandler {
   readonly eventType = "topic.metrics.updated";
 
   async handle({ envelope }: AgentContext): Promise<AgentResult> {
-    const topicId = optionalString(envelope.payload, "topicId") ?? envelope.topicId;
+    const { topicId, nodeIds, generation } = await a5BalancerService.onTopicMetricsUpdated(envelope);
     return {
       ack: true,
-      emittedEvents: [
-        {
-          type: "topic.node_changed",
+      emittedEvents: nodeIds.map((nodeId) => ({
+        type: "topic.node_changed",
+        topicId,
+        orderingKey: nodeId,
+        idempotencyKey: `type:topic.node_changed/topicId:${topicId}/nodeId:${nodeId}/generation:${generation}`,
+        payload: {
           topicId,
-          orderingKey: `node:${topicId}:root`,
-          idempotencyKey: `type:topic.node_changed/topicId:${topicId}/nodeId:node:${topicId}:root/generation:1`,
-          payload: {
-            topicId,
-            nodeId: `node:${topicId}:root`,
-            reason: "topic.metrics.updated",
-            generation: 1,
-          },
+          nodeId,
+          reason: "topic.metrics.updated",
+          generation,
         },
-      ],
+      })),
     };
   }
 }

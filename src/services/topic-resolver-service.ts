@@ -1,3 +1,5 @@
+import { env } from "../config/env.js";
+import { TemporaryDependencyError } from "../core/errors.js";
 import { AtomRepository } from "../repositories/atom-repository.js";
 import { TopicRepository, type TopicCandidate } from "../repositories/topic-repository.js";
 import type { EventEnvelope } from "../models/envelope.js";
@@ -14,6 +16,19 @@ export type TopicResolution = {
 
 const ATTACH_THRESHOLD = 0.8;
 const SCORE_GAP_THRESHOLD = 0.15;
+const GEMINI_MODEL = "gemini-2.0-flash";
+
+type ScoredCandidate = {
+  candidate: TopicCandidate;
+  score: number;
+};
+
+type GeminiResolution = {
+  decision: "attach_existing" | "create_new";
+  resolvedTopicId?: string;
+  confidence: number;
+  reason: string;
+};
 
 export class TopicResolverService {
   private readonly topicRepository = new TopicRepository();
@@ -42,6 +57,54 @@ export class TopicResolverService {
       scored.map(({ candidate }) => [candidate.topicId, candidate.status]),
     );
 
+    if (!env.VERTEX_USE_REAL_API || scored.length === 0) {
+      return this.resolveDeterministically(envelope, scored, candidateTopicIds, candidateTopicStates);
+    }
+
+    const gemini = await this.resolveWithGemini(queryText, scored);
+    const top = scored[0];
+    const second = scored[1];
+    const candidatesCompete = Boolean(second && top.score - second.score < SCORE_GAP_THRESHOLD);
+    const canAttach =
+      gemini.decision === "attach_existing" &&
+      typeof gemini.resolvedTopicId === "string" &&
+      gemini.confidence >= ATTACH_THRESHOLD &&
+      !candidatesCompete;
+
+    if (canAttach) {
+      const selected = scored.find(({ candidate }) => candidate.topicId === gemini.resolvedTopicId);
+      if (selected) {
+        return {
+          resolvedTopicId: selected.candidate.topicId,
+          resolutionMode: "existing",
+          resolutionConfidence: gemini.confidence,
+          resolutionReason: gemini.reason,
+          topicLifecycleStateAtResolution: selected.candidate.status,
+          candidateTopicIds,
+          candidateTopicStates,
+        };
+      }
+    }
+
+    return {
+      resolvedTopicId: envelope.topicId,
+      resolutionMode: "new",
+      resolutionConfidence: Math.max(0.35, gemini.confidence || top.score),
+      resolutionReason: candidatesCompete
+        ? "top candidates are too close, so creating a new topic is safer"
+        : gemini.reason,
+      topicLifecycleStateAtResolution: "active",
+      candidateTopicIds,
+      candidateTopicStates,
+    };
+  }
+
+  private resolveDeterministically(
+    envelope: EventEnvelope,
+    scored: ScoredCandidate[],
+    candidateTopicIds: string[],
+    candidateTopicStates: Record<string, string>,
+  ): TopicResolution {
     const top = scored[0];
     const second = scored[1];
     const hasClearWinner =
@@ -69,6 +132,120 @@ export class TopicResolverService {
       topicLifecycleStateAtResolution: "active",
       candidateTopicIds,
       candidateTopicStates,
+    };
+  }
+
+  private async resolveWithGemini(queryText: string, scored: ScoredCandidate[]): Promise<GeminiResolution> {
+    const response = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${env.GEMINI_API_KEY}`,
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          contents: [
+            {
+              role: "user",
+              parts: [
+                {
+                  text: this.buildGeminiPrompt(queryText, scored.slice(0, 5)),
+                },
+              ],
+            },
+          ],
+          generationConfig: {
+            temperature: 0,
+            responseMimeType: "application/json",
+          },
+        }),
+      },
+    ).catch((error) => {
+      throw new TemporaryDependencyError(
+        `topic resolver Gemini request failed: ${error instanceof Error ? error.message : "unknown error"}`,
+      );
+    });
+
+    if (!response.ok) {
+      throw new TemporaryDependencyError(`topic resolver Gemini request failed with ${response.status}`);
+    }
+
+    const data = (await response.json()) as {
+      candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
+    };
+
+    const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
+    if (typeof text !== "string" || text.length === 0) {
+      throw new TemporaryDependencyError("topic resolver Gemini response was empty");
+    }
+
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(this.extractJson(text));
+    } catch {
+      throw new TemporaryDependencyError("topic resolver Gemini response was not valid JSON");
+    }
+
+    return this.validateGeminiResolution(parsed);
+  }
+
+  private buildGeminiPrompt(queryText: string, scored: ScoredCandidate[]): string {
+    const candidates = scored.map(({ candidate, score }) => ({
+      topicId: candidate.topicId,
+      title: candidate.title,
+      status: candidate.status,
+      deterministicScore: Number(score.toFixed(4)),
+    }));
+
+    return [
+      "You are a topic resolver for a long-lived knowledge graph.",
+      "Choose whether to attach to an existing topic or create a new topic.",
+      "Return JSON only with keys: decision, resolvedTopicId, confidence, reason.",
+      "decision must be attach_existing or create_new.",
+      "confidence must be a number between 0 and 1.",
+      "If create_new, resolvedTopicId can be omitted.",
+      "",
+      `queryText: ${queryText}`,
+      `candidates: ${JSON.stringify(candidates)}`,
+    ].join("\n");
+  }
+
+  private extractJson(text: string): string {
+    const trimmed = text.trim();
+    if (trimmed.startsWith("```") && trimmed.endsWith("```")) {
+      return trimmed.replace(/^```json\s*/i, "").replace(/^```\s*/i, "").replace(/```$/, "").trim();
+    }
+    return trimmed;
+  }
+
+  private validateGeminiResolution(value: unknown): GeminiResolution {
+    if (typeof value !== "object" || value === null) {
+      throw new TemporaryDependencyError("topic resolver Gemini response shape was invalid");
+    }
+
+    const decision = (value as Record<string, unknown>).decision;
+    const resolvedTopicId = (value as Record<string, unknown>).resolvedTopicId;
+    const confidence = (value as Record<string, unknown>).confidence;
+    const reason = (value as Record<string, unknown>).reason;
+
+    if (decision !== "attach_existing" && decision !== "create_new") {
+      throw new TemporaryDependencyError("topic resolver Gemini decision was invalid");
+    }
+    if (typeof confidence !== "number" || !Number.isFinite(confidence) || confidence < 0 || confidence > 1) {
+      throw new TemporaryDependencyError("topic resolver Gemini confidence was invalid");
+    }
+    if (typeof reason !== "string" || reason.length === 0) {
+      throw new TemporaryDependencyError("topic resolver Gemini reason was invalid");
+    }
+    if (resolvedTopicId !== undefined && (typeof resolvedTopicId !== "string" || resolvedTopicId.length === 0)) {
+      throw new TemporaryDependencyError("topic resolver Gemini resolvedTopicId was invalid");
+    }
+
+    return {
+      decision,
+      resolvedTopicId: resolvedTopicId as string | undefined,
+      confidence,
+      reason,
     };
   }
 

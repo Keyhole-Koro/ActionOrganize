@@ -30,6 +30,8 @@ VERTEX_USE_REAL_API=false \
 npm run dev
 ```
 
+`VERTEX_USE_REAL_API=true` で起動する場合は、`GEMINI_API_KEY` を必須で設定してください。
+
 ## Endpoints
 
 * `GET /healthz`
@@ -79,6 +81,7 @@ Required:
   * positive integer
 * `VERTEX_USE_REAL_API`
   * `true` or `false`
+* `GEMINI_API_KEY` (when `VERTEX_USE_REAL_API=true`)
 
 Optional:
 
