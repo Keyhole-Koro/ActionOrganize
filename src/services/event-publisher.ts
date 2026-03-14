@@ -32,21 +32,26 @@ export class EventPublisher {
         workspaceId: context.sourceEnvelope.workspaceId,
         topicId: emittedEvent.topicId,
         uid: context.sourceEnvelope.uid,
-        idempotencyKey: `${emittedEvent.type}/source:${context.sourceEnvelope.idempotencyKey}`,
+        idempotencyKey:
+          emittedEvent.idempotencyKey ??
+          `${emittedEvent.type}/source:${context.sourceEnvelope.idempotencyKey}`,
         emittedAt: new Date().toISOString(),
         payload: emittedEvent.payload,
       };
 
       try {
+        const attributes = {
+          type: envelope.type,
+          schemaVersion: envelope.schemaVersion,
+          workspaceId: envelope.workspaceId,
+          topicId: envelope.topicId,
+          ...this.buildOptionalAttributes(envelope.payload),
+        };
+
         await topic.publishMessage({
           json: envelope,
           orderingKey: emittedEvent.orderingKey,
-          attributes: {
-            type: envelope.type,
-            schemaVersion: envelope.schemaVersion,
-            workspaceId: envelope.workspaceId,
-            topicId: envelope.topicId,
-          },
+          attributes,
         });
       } catch (error) {
         throw new TemporaryDependencyError(
@@ -63,5 +68,21 @@ export class EventPublisher {
         },
         { merge: true },
       );
+  }
+
+  private buildOptionalAttributes(payload: EventEnvelope["payload"]) {
+    const attributes: Record<string, string> = {};
+    const keys = ["nodeId", "inputId", "bundleId", "draftVersion", "outlineVersion"] as const;
+
+    for (const key of keys) {
+      const value = payload[key];
+      if (typeof value === "string" && value.length > 0) {
+        attributes[key] = value;
+      } else if (typeof value === "number" && Number.isFinite(value)) {
+        attributes[key] = String(value);
+      }
+    }
+
+    return attributes;
   }
 }

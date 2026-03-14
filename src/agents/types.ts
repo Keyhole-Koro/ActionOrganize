@@ -7,6 +7,7 @@ export type AgentResult = {
     topicId: string;
     payload: Record<string, unknown>;
     orderingKey?: string;
+    idempotencyKey?: string;
   }>;
 };
 

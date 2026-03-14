@@ -1,6 +1,7 @@
 import { InvalidEventError } from "../../core/errors.js";
 import { A0A1WriteService } from "../../services/a0-a1-write-service.js";
 import { A2DraftAppenderService } from "../../services/a2-draft-appender-service.js";
+import { PipelineWriteService } from "../../services/pipeline-write-service.js";
 import type { AgentContext, AgentHandler, AgentResult } from "../types.js";
 
 type Payload = Record<string, unknown>;
@@ -42,6 +43,7 @@ function optionalString(payload: Payload, key: string): string | undefined {
 
 const writeService = new A0A1WriteService();
 const draftAppenderService = new A2DraftAppenderService();
+const pipelineWriteService = new PipelineWriteService();
 
 class MediaReceivedHandler implements AgentHandler {
   readonly eventType = "media.received";
@@ -57,6 +59,7 @@ class MediaReceivedHandler implements AgentHandler {
         {
           type: "input.received",
           topicId: envelope.topicId,
+          idempotencyKey: `type:input.received/topicId:${envelope.topicId}/inputId:${inputId}`,
           payload: { topicId: envelope.topicId, inputId },
         },
       ],
@@ -79,6 +82,7 @@ class InputReceivedHandler implements AgentHandler {
         {
           type: "atom.created",
           topicId: envelope.topicId,
+          idempotencyKey: `type:atom.created/topicId:${envelope.topicId}/inputId:${inputId}`,
           payload: { topicId: envelope.topicId, inputId, atomIds },
         },
       ],
@@ -100,12 +104,15 @@ class AtomCreatedHandler implements AgentHandler {
           type: "topic.resolved",
           topicId: envelope.topicId,
           orderingKey: envelope.topicId,
+          idempotencyKey: `type:topic.resolved/topicId:${envelope.topicId}/inputId:${inputId}`,
           payload: {
             resolvedTopicId: envelope.topicId,
             inputId,
             atomIds,
-            resolutionMode: "attach_existing",
+            resolutionMode: "existing",
             resolutionConfidence: 0.8,
+            resolutionReason: "center target and primary nodes align with existing topic",
+            topicLifecycleStateAtResolution: "active",
           },
         },
       ],
@@ -121,6 +128,8 @@ class TopicResolvedHandler implements AgentHandler {
     const inputId = requireString(envelope.payload, "inputId");
     const atomIds = requireStringArray(envelope.payload, "atomIds");
     const resolutionMode = requireString(envelope.payload, "resolutionMode");
+    optionalString(envelope.payload, "resolutionReason");
+    optionalString(envelope.payload, "topicLifecycleStateAtResolution");
 
     await writeService.onTopicResolved(envelope, inputId, resolvedTopicId, resolutionMode);
     const { draftVersion } = await draftAppenderService.appendDraft(
@@ -138,6 +147,7 @@ class TopicResolvedHandler implements AgentHandler {
           type: "draft.updated",
           topicId: resolvedTopicId,
           orderingKey: resolvedTopicId,
+          idempotencyKey: `type:draft.updated/topicId:${resolvedTopicId}/draftVersion:${draftVersion}`,
           payload: {
             topicId: resolvedTopicId,
             draftVersion,
@@ -155,6 +165,14 @@ class DraftUpdatedHandler implements AgentHandler {
 
   async handle({ envelope }: AgentContext): Promise<AgentResult> {
     const draftVersion = requireNumber(envelope.payload, "draftVersion");
+    const appendedAtomIds = requireStringArray(envelope.payload, "appendedAtomIds");
+    const inputId = optionalString(envelope.payload, "inputId");
+    const { bundleId } = await pipelineWriteService.onDraftUpdated(
+      envelope,
+      draftVersion,
+      appendedAtomIds,
+      inputId,
+    );
 
     return {
       ack: true,
@@ -163,10 +181,12 @@ class DraftUpdatedHandler implements AgentHandler {
           type: "bundle.created",
           topicId: envelope.topicId,
           orderingKey: envelope.topicId,
+          idempotencyKey: `type:bundle.created/topicId:${envelope.topicId}/bundleId:${bundleId}`,
           payload: {
             topicId: envelope.topicId,
-            bundleId: `bundle:${envelope.topicId}:v${draftVersion}`,
+            bundleId,
             sourceDraftVersion: draftVersion,
+            inputId,
           },
         },
       ],
@@ -180,6 +200,13 @@ class BundleCreatedHandler implements AgentHandler {
   async handle({ envelope }: AgentContext): Promise<AgentResult> {
     const bundleId = requireString(envelope.payload, "bundleId");
     const sourceDraftVersion = requireNumber(envelope.payload, "sourceDraftVersion");
+    const inputId = optionalString(envelope.payload, "inputId");
+    const { outlineVersion, changedNodeIds } = await pipelineWriteService.onBundleCreated(
+      envelope,
+      bundleId,
+      sourceDraftVersion,
+      inputId,
+    );
 
     return {
       ack: true,
@@ -188,11 +215,13 @@ class BundleCreatedHandler implements AgentHandler {
           type: "outline.updated",
           topicId: envelope.topicId,
           orderingKey: envelope.topicId,
+          idempotencyKey: `type:outline.updated/topicId:${envelope.topicId}/outlineVersion:${outlineVersion}`,
           payload: {
             topicId: envelope.topicId,
             bundleId,
-            outlineVersion: sourceDraftVersion,
-            changedNodeIds: [`node:${envelope.topicId}:root`],
+            outlineVersion,
+            changedNodeIds,
+            inputId,
           },
         },
       ],
@@ -213,8 +242,10 @@ class OutlineUpdatedHandler implements AgentHandler {
   readonly eventType = "outline.updated";
 
   async handle({ envelope }: AgentContext): Promise<AgentResult> {
-    requireNumber(envelope.payload, "outlineVersion");
     const changedNodeIds = requireStringArray(envelope.payload, "changedNodeIds");
+    const outlineVersion = requireNumber(envelope.payload, "outlineVersion");
+
+    await pipelineWriteService.onOutlineUpdated(envelope, outlineVersion, changedNodeIds);
 
     return {
       ack: true,
@@ -222,10 +253,12 @@ class OutlineUpdatedHandler implements AgentHandler {
         type: "topic.node_changed",
         topicId: envelope.topicId,
         orderingKey: nodeId,
+        idempotencyKey: `type:topic.node_changed/topicId:${envelope.topicId}/nodeId:${nodeId}/generation:${outlineVersion}`,
         payload: {
           topicId: envelope.topicId,
           nodeId,
           reason: "outline.updated",
+          generation: outlineVersion,
         },
       })),
     };
@@ -237,6 +270,8 @@ class TopicNodeChangedHandler implements AgentHandler {
 
   async handle({ envelope }: AgentContext): Promise<AgentResult> {
     const nodeId = requireString(envelope.payload, "nodeId");
+    const generation =
+      typeof envelope.payload.generation === "number" ? envelope.payload.generation : 1;
 
     return {
       ack: true,
@@ -245,10 +280,11 @@ class TopicNodeChangedHandler implements AgentHandler {
           type: "node.rollup_requested",
           topicId: envelope.topicId,
           orderingKey: nodeId,
+          idempotencyKey: `type:node.rollup_requested/topicId:${envelope.topicId}/nodeId:${nodeId}/generation:${generation}`,
           payload: {
             topicId: envelope.topicId,
             nodeId,
-            generation: 1,
+            generation,
           },
         },
       ],
@@ -260,7 +296,9 @@ class NodeRollupRequestedHandler implements AgentHandler {
   readonly eventType = "node.rollup_requested";
 
   async handle({ envelope }: AgentContext): Promise<AgentResult> {
-    requireString(envelope.payload, "nodeId");
+    const nodeId = requireString(envelope.payload, "nodeId");
+    const generation = requireNumber(envelope.payload, "generation");
+    await pipelineWriteService.onNodeRollupRequested(envelope, nodeId, generation);
     return { ack: true, emittedEvents: [] };
   }
 }
@@ -276,11 +314,13 @@ class TopicMetricsUpdatedHandler implements AgentHandler {
         {
           type: "topic.node_changed",
           topicId,
-          orderingKey: topicId,
+          orderingKey: `node:${topicId}:root`,
+          idempotencyKey: `type:topic.node_changed/topicId:${topicId}/nodeId:node:${topicId}:root/generation:1`,
           payload: {
             topicId,
             nodeId: `node:${topicId}:root`,
             reason: "topic.metrics.updated",
+            generation: 1,
           },
         },
       ],
