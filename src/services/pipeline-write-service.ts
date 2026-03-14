@@ -1,5 +1,6 @@
 import { FieldValue } from "@google-cloud/firestore";
 import { env } from "../config/env.js";
+import { TemporaryDependencyError } from "../core/errors.js";
 import type { EventEnvelope } from "../models/envelope.js";
 import { IndexItemRepository } from "../repositories/index-item-repository.js";
 import { InputProgressRepository } from "../repositories/input-progress-repository.js";
@@ -80,7 +81,13 @@ export class PipelineWriteService {
     const bundle = await this.bundleRepository.get(envelope.workspaceId, envelope.topicId, bundleId);
     const descHtml = this.toBundleDescHtml(envelope.topicId, bundleId, sourceDraftVersion, bundle);
 
-    await this.bundleDescriptionRepository.writeHtml(descRef, descHtml);
+    try {
+      await this.bundleDescriptionRepository.writeHtml(descRef, descHtml);
+    } catch (error) {
+      throw new TemporaryDependencyError(
+        `failed to write bundle description: ${error instanceof Error ? error.message : "unknown error"}`,
+      );
+    }
 
     const firestore = this.topicRepository.firestoreClient;
     const topicRef = this.topicRepository.docRef(envelope.workspaceId, envelope.topicId);

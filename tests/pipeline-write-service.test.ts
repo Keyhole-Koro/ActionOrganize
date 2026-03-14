@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import { PipelineWriteService } from "../src/services/pipeline-write-service.js";
+import { TemporaryDependencyError } from "../src/core/errors.js";
 import type { EventEnvelope } from "../src/models/envelope.js";
 
 function makeEnvelope(type: string): EventEnvelope {
@@ -58,5 +59,35 @@ describe("PipelineWriteService.onBundleDescribed", () => {
     );
 
     expect(markDescribed).not.toHaveBeenCalled();
+  });
+});
+
+describe("PipelineWriteService.onBundleCreated", () => {
+  it("throws TemporaryDependencyError when bundle description write fails", async () => {
+    const service = new PipelineWriteService();
+    const get = vi.fn().mockResolvedValue(null);
+    const writeHtml = vi.fn().mockRejectedValue(new Error("gcs unavailable"));
+
+    (
+      service as unknown as {
+        bundleRepository: { get: typeof get };
+        bundleDescriptionRepository: { writeHtml: typeof writeHtml };
+      }
+    ).bundleRepository = { get };
+
+    (
+      service as unknown as {
+        bundleDescriptionRepository: { writeHtml: typeof writeHtml };
+      }
+    ).bundleDescriptionRepository = { writeHtml };
+
+    const promise = service.onBundleCreated(
+      makeEnvelope("bundle.created"),
+      "bundle-1",
+      1,
+      "input-1",
+    );
+
+    await expect(promise).rejects.toBeInstanceOf(TemporaryDependencyError);
   });
 });
