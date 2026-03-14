@@ -1,5 +1,6 @@
 import { env } from "../config/env.js";
 import { TemporaryDependencyError } from "../core/errors.js";
+import { logger } from "../lib/logger.js";
 import { AtomRepository } from "../repositories/atom-repository.js";
 import { TopicRepository, type TopicCandidate } from "../repositories/topic-repository.js";
 import type { EventEnvelope } from "../models/envelope.js";
@@ -58,7 +59,26 @@ export class TopicResolverService {
     );
 
     if (!env.VERTEX_USE_REAL_API || scored.length === 0) {
-      return this.resolveDeterministically(envelope, scored, candidateTopicIds, candidateTopicStates);
+      const resolution = this.resolveDeterministically(
+        envelope,
+        scored,
+        candidateTopicIds,
+        candidateTopicStates,
+      );
+      logger.info(
+        {
+          traceId: envelope.traceId,
+          workspaceId: envelope.workspaceId,
+          topicId: envelope.topicId,
+          inputId,
+          resolutionMode: resolution.resolutionMode,
+          resolutionConfidence: resolution.resolutionConfidence,
+          candidateTopicIds,
+          resolverMode: "deterministic",
+        },
+        "topic resolved",
+      );
+      return resolution;
     }
 
     const gemini = await this.resolveWithGemini(queryText, scored);
@@ -77,7 +97,7 @@ export class TopicResolverService {
     if (canAttach) {
       const selected = scored.find(({ candidate }) => candidate.topicId === gemini.resolvedTopicId);
       if (selected) {
-        return {
+        const resolution: TopicResolution = {
           resolvedTopicId: selected.candidate.topicId,
           resolutionMode: "existing",
           resolutionConfidence: gemini.confidence,
@@ -86,10 +106,26 @@ export class TopicResolverService {
           candidateTopicIds,
           candidateTopicStates,
         };
+        logger.info(
+          {
+            traceId: envelope.traceId,
+            workspaceId: envelope.workspaceId,
+            topicId: envelope.topicId,
+            inputId,
+            resolutionMode: resolution.resolutionMode,
+            resolutionConfidence: resolution.resolutionConfidence,
+            candidateTopicIds,
+            resolvedTopicId: resolution.resolvedTopicId,
+            geminiModel: env.GEMINI_MODEL,
+            resolverMode: "gemini",
+          },
+          "topic resolved",
+        );
+        return resolution;
       }
     }
 
-    return {
+    const resolution: TopicResolution = {
       resolvedTopicId: envelope.topicId,
       resolutionMode: "new",
       resolutionConfidence: Math.max(0.35, gemini.confidence || top.score),
@@ -100,6 +136,22 @@ export class TopicResolverService {
       candidateTopicIds,
       candidateTopicStates,
     };
+    logger.info(
+      {
+        traceId: envelope.traceId,
+        workspaceId: envelope.workspaceId,
+        topicId: envelope.topicId,
+        inputId,
+        resolutionMode: resolution.resolutionMode,
+        resolutionConfidence: resolution.resolutionConfidence,
+        candidateTopicIds,
+        resolvedTopicId: resolution.resolvedTopicId,
+        geminiModel: env.GEMINI_MODEL,
+        resolverMode: "gemini",
+      },
+      "topic resolved",
+    );
+    return resolution;
   }
 
   private resolveDeterministically(

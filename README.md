@@ -33,6 +33,32 @@ npm run dev
 `VERTEX_USE_REAL_API=true` で起動する場合は、`GEMINI_API_KEY` を必須で設定してください。
 必要に応じて `GEMINI_MODEL` を設定してください（既定値: `gemini-3-flash`）。
 
+例（Gemini 実 API）:
+
+```bash
+PORT=8090 \
+STATE_BACKEND=firestore \
+GOOGLE_CLOUD_PROJECT=local-dev \
+PUBSUB_EMULATOR_HOST=localhost:8085 \
+PUBSUB_TOPIC_NAME=mind-events \
+PUBSUB_PUBLISH_ENABLED=true \
+FIRESTORE_EMULATOR_HOST=localhost:8081 \
+STORAGE_EMULATOR_HOST=http://localhost:4443 \
+ORGANIZE_GCS_BUCKET=organize-local \
+LEASE_TTL_SECONDS=120 \
+VERTEX_USE_REAL_API=true \
+GEMINI_API_KEY=your-api-key \
+GEMINI_MODEL=gemini-3-flash \
+npm run dev
+```
+
+Docker Compose では root の `compose.override.yaml` により `organize` を実 API モードで起動できます。
+
+```bash
+export GEMINI_API_KEY=your-api-key
+docker compose --profile full up organize
+```
+
 ## Endpoints
 
 * `GET /healthz`
