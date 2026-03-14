@@ -18,6 +18,8 @@ export type NodeRecord = {
 export type NodeCandidate = {
   nodeId: string;
   title: string;
+  contextSummary?: string;
+  schemaVersion?: number;
 };
 
 export class NodeRepository {
@@ -78,6 +80,9 @@ export class NodeRepository {
     return snapshot.docs.map((doc) => ({
       nodeId: doc.id,
       title: typeof doc.get("title") === "string" ? doc.get("title") : doc.id,
+      contextSummary:
+        typeof doc.get("contextSummary") === "string" ? doc.get("contextSummary") : undefined,
+      schemaVersion: typeof doc.get("schemaVersion") === "number" ? doc.get("schemaVersion") : undefined,
     }));
   }
 }

@@ -12,7 +12,7 @@ import { TopicRepository } from "../repositories/topic-repository.js";
 import { BundleDescriptionRepository } from "../repositories/bundle-description-repository.js";
 import { EdgeRepository } from "../repositories/edge-repository.js";
 import { AtomRepository } from "../repositories/atom-repository.js";
-import { dedupeNodeIds, resolveNodeId } from "./cleaner-entity-resolution.js";
+import { dedupeNodeIds, resolveNode } from "./cleaner-entity-resolution.js";
 
 type DraftBundleResult = {
   bundleId: string;
@@ -108,11 +108,17 @@ export class PipelineWriteService {
     );
     const resolvedCandidates = candidateAtoms.map((atom) => {
       const fallbackNodeId = this.toAtomNodeId(envelope.topicId, atom.atomId);
-      const resolvedNodeId = resolveNodeId(existingClaimNodes, atom.title, fallbackNodeId);
+      const resolved = resolveNode(existingClaimNodes, {
+        atomTitle: atom.title,
+        atomClaim: atom.claim,
+        fallbackNodeId,
+        schemaVersion: bundle?.schemaVersion,
+      });
       return {
         atom,
-        nodeId: resolvedNodeId,
-        isMerged: existingClaimNodes.some((existing) => existing.nodeId === resolvedNodeId),
+        nodeId: resolved.nodeId,
+        isMerged: resolved.isMerged,
+        similarity: resolved.similarity,
       };
     });
     const changedNodeIds = dedupeNodeIds([rootNodeId, ...resolvedCandidates.map((item) => item.nodeId)]);
@@ -177,7 +183,7 @@ export class PipelineWriteService {
           parentId: rootNodeId,
           schemaVersion,
           contextSummary: candidate.isMerged
-            ? `Merged from bundle ${bundleId}: ${candidate.atom.claim}`
+            ? `Merged from bundle ${bundleId} (score=${candidate.similarity.toFixed(2)}): ${candidate.atom.claim}`
             : candidate.atom.claim,
         });
         this.edgeRepository.write(tx, {
