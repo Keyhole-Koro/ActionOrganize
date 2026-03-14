@@ -1,23 +1,37 @@
 import { z } from "zod";
 
+const requiredString = (name: string) =>
+  z.string().trim().min(1, `${name} is required`);
+
+const requiredBooleanString = (name: string) =>
+  z
+    .enum(["true", "false"], {
+      error: () => `${name} must be "true" or "false"`,
+    })
+    .transform((value) => value === "true");
+
+const requiredPositiveInt = (name: string) =>
+  z.coerce
+    .number({
+      error: () => `${name} must be an integer`,
+    })
+    .int(`${name} must be an integer`)
+    .positive(`${name} must be greater than 0`);
+
 const envSchema = z.object({
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
-  PORT: z.coerce.number().int().positive().default(8090),
-  STATE_BACKEND: z.enum(["memory", "firestore"]).default("memory"),
-  GOOGLE_CLOUD_PROJECT: z.string().default("local-dev"),
-  PUBSUB_EMULATOR_HOST: z.string().default("localhost:8085"),
-  PUBSUB_TOPIC_NAME: z.string().default("mind-events"),
-  PUBSUB_PUBLISH_ENABLED: z
-    .string()
-    .optional()
-    .transform((value) => value === "true"),
-  FIRESTORE_EMULATOR_HOST: z.string().default("localhost:8081"),
-  STORAGE_EMULATOR_HOST: z.string().default("http://localhost:4443"),
-  LEASE_TTL_SECONDS: z.coerce.number().int().positive().default(120),
-  VERTEX_USE_REAL_API: z
-    .string()
-    .optional()
-    .transform((value) => value === "true"),
+  PORT: requiredPositiveInt("PORT"),
+  STATE_BACKEND: z.enum(["memory", "firestore"], {
+    error: () => 'STATE_BACKEND must be "memory" or "firestore"',
+  }),
+  GOOGLE_CLOUD_PROJECT: requiredString("GOOGLE_CLOUD_PROJECT"),
+  PUBSUB_EMULATOR_HOST: requiredString("PUBSUB_EMULATOR_HOST"),
+  PUBSUB_TOPIC_NAME: requiredString("PUBSUB_TOPIC_NAME"),
+  PUBSUB_PUBLISH_ENABLED: requiredBooleanString("PUBSUB_PUBLISH_ENABLED"),
+  FIRESTORE_EMULATOR_HOST: requiredString("FIRESTORE_EMULATOR_HOST"),
+  STORAGE_EMULATOR_HOST: requiredString("STORAGE_EMULATOR_HOST"),
+  LEASE_TTL_SECONDS: requiredPositiveInt("LEASE_TTL_SECONDS"),
+  VERTEX_USE_REAL_API: requiredBooleanString("VERTEX_USE_REAL_API"),
 });
 
 export type AppEnv = z.infer<typeof envSchema>;

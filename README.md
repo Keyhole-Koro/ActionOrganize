@@ -11,15 +11,21 @@ npm run typecheck
 npm run build
 ```
 
-既定の待受は `http://localhost:8090` です。
+起動時に必須環境変数を検証します。missing や空文字では起動しません。
 
 Firestore/Pub/Sub emulator と合わせる場合の例:
 
 ```bash
+PORT=8090 \
+GOOGLE_CLOUD_PROJECT=local-dev \
 FIRESTORE_EMULATOR_HOST=localhost:8081 \
+STORAGE_EMULATOR_HOST=http://localhost:4443 \
 PUBSUB_EMULATOR_HOST=localhost:8085 \
+PUBSUB_TOPIC_NAME=mind-events \
 STATE_BACKEND=memory \
 PUBSUB_PUBLISH_ENABLED=false \
+LEASE_TTL_SECONDS=120 \
+VERTEX_USE_REAL_API=false \
 npm run dev
 ```
 
@@ -49,13 +55,24 @@ npm run dev
 
 ## Environment
 
-* `PORT` default: `8090`
-* `STATE_BACKEND` default: `memory`
-* `GOOGLE_CLOUD_PROJECT` default: `local-dev`
-* `PUBSUB_EMULATOR_HOST` default: `localhost:8085`
-* `PUBSUB_TOPIC_NAME` default: `mind-events`
-* `PUBSUB_PUBLISH_ENABLED` default: `false`
-* `FIRESTORE_EMULATOR_HOST` default: `localhost:8081`
-* `STORAGE_EMULATOR_HOST` default: `http://localhost:4443`
-* `LEASE_TTL_SECONDS` default: `120`
-* `VERTEX_USE_REAL_API` default: `false`
+Required:
+
+* `PORT`
+* `STATE_BACKEND`
+  * `memory` or `firestore`
+* `GOOGLE_CLOUD_PROJECT`
+* `PUBSUB_EMULATOR_HOST`
+* `PUBSUB_TOPIC_NAME`
+* `PUBSUB_PUBLISH_ENABLED`
+  * `true` or `false`
+* `FIRESTORE_EMULATOR_HOST`
+* `STORAGE_EMULATOR_HOST`
+* `LEASE_TTL_SECONDS`
+  * positive integer
+* `VERTEX_USE_REAL_API`
+  * `true` or `false`
+
+Optional:
+
+* `NODE_ENV`
+  * `development`, `test`, `production`
