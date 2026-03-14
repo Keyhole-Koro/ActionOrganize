@@ -140,4 +140,69 @@ describe("PipelineBundleRepository.tryStartApply", () => {
     });
     expect(snapshot?.applyError).toBeUndefined();
   });
+
+  it("returns structured descError from snapshot", async () => {
+    const bundleId = `bundle-desc-error-${Date.now()}`;
+    createdBundleIds.push(bundleId);
+
+    await repository.docRef(workspaceId, topicId, bundleId).set({
+      bundleId,
+      topicId,
+      sourceDraftVersion: 4,
+      schemaVersion: 5,
+      atomCount: 1,
+      descStatus: "error",
+      descError: {
+        code: "desc_write_failed",
+        message: "firestore unavailable",
+      },
+    });
+
+    const snapshot = await repository.get(workspaceId, topicId, bundleId);
+
+    expect(snapshot).toMatchObject({
+      bundleId,
+      descStatus: "error",
+      descError: {
+        code: "desc_write_failed",
+        message: "firestore unavailable",
+      },
+    });
+  });
+
+  it("clears descError when markDescribed succeeds", async () => {
+    const bundleId = `bundle-desc-retry-${Date.now()}`;
+    createdBundleIds.push(bundleId);
+
+    await repository.docRef(workspaceId, topicId, bundleId).set({
+      bundleId,
+      topicId,
+      sourceDraftVersion: 5,
+      schemaVersion: 6,
+      atomCount: 1,
+      descStatus: "error",
+      descError: {
+        code: "desc_write_failed",
+        message: "firestore unavailable",
+      },
+      descVersion: 2,
+    });
+
+    const nextVersion = await repository.markDescribed(
+      workspaceId,
+      topicId,
+      bundleId,
+      "mind/bundle_desc/bundle-desc-retry/v3.html",
+    );
+
+    expect(nextVersion).toBe(3);
+
+    const snapshot = await repository.get(workspaceId, topicId, bundleId);
+    expect(snapshot).toMatchObject({
+      bundleId,
+      descStatus: "described",
+      descVersion: 3,
+    });
+    expect(snapshot?.descError).toBeUndefined();
+  });
 });

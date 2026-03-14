@@ -29,6 +29,10 @@ export type PipelineBundleSnapshot = {
     code: string;
     message: string;
   };
+  descError?: {
+    code: string;
+    message: string;
+  };
   descVersion: number;
 };
 
@@ -174,6 +178,7 @@ export class PipelineBundleRepository {
         {
           descStatus: "described",
           descRef,
+          descError: FieldValue.delete(),
           descVersion: nextVersion,
           describedAt: FieldValue.serverTimestamp(),
           updatedAt: FieldValue.serverTimestamp(),
@@ -182,6 +187,26 @@ export class PipelineBundleRepository {
       );
       return nextVersion;
     });
+  }
+
+  async markDescribeFailed(
+    workspaceId: string,
+    topicId: string,
+    bundleId: string,
+    errorCode: string,
+    message: string,
+  ): Promise<void> {
+    await this.docRef(workspaceId, topicId, bundleId).set(
+      {
+        descStatus: "error",
+        descError: {
+          code: errorCode,
+          message,
+        },
+        updatedAt: FieldValue.serverTimestamp(),
+      },
+      { merge: true },
+    );
   }
 
   async get(
@@ -203,6 +228,7 @@ export class PipelineBundleRepository {
     const descStatus = snapshot.get("descStatus");
     const appliedAt = snapshot.get("appliedAt");
     const applyError = snapshot.get("applyError");
+    const descError = snapshot.get("descError");
     const descVersion = snapshot.get("descVersion");
 
     return {
@@ -232,6 +258,19 @@ export class PipelineBundleRepository {
               message:
                 typeof (applyError as { message?: unknown }).message === "string"
                   ? (applyError as { message: string }).message
+                  : "",
+            }
+          : undefined,
+      descError:
+        descError && typeof descError === "object"
+          ? {
+              code:
+                typeof (descError as { code?: unknown }).code === "string"
+                  ? (descError as { code: string }).code
+                  : "unknown_error",
+              message:
+                typeof (descError as { message?: unknown }).message === "string"
+                  ? (descError as { message: string }).message
                   : "",
             }
           : undefined,
