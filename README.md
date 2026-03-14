@@ -31,6 +31,7 @@ npm run dev
 ```
 
 `VERTEX_USE_REAL_API=true` で起動する場合は、`GEMINI_API_KEY` を必須で設定してください。
+必要に応じて `GEMINI_MODEL` を設定してください（既定値: `gemini-3-flash`）。
 
 ## Endpoints
 
@@ -82,6 +83,8 @@ Required:
 * `VERTEX_USE_REAL_API`
   * `true` or `false`
 * `GEMINI_API_KEY` (when `VERTEX_USE_REAL_API=true`)
+* `GEMINI_MODEL`
+  * default: `gemini-3-flash` (e.g. `gemini-3-pro`)
 
 Optional:
 

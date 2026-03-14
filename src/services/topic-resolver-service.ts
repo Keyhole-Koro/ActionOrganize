@@ -16,7 +16,7 @@ export type TopicResolution = {
 
 const ATTACH_THRESHOLD = 0.8;
 const SCORE_GAP_THRESHOLD = 0.15;
-const GEMINI_MODEL = "gemini-2.0-flash";
+const GEMINI_TIMEOUT_MS = 7000;
 
 type ScoredCandidate = {
   candidate: TopicCandidate;
@@ -65,9 +65,12 @@ export class TopicResolverService {
     const top = scored[0];
     const second = scored[1];
     const candidatesCompete = Boolean(second && top.score - second.score < SCORE_GAP_THRESHOLD);
+    const resolvedTopicInCandidates =
+      typeof gemini.resolvedTopicId === "string" &&
+      scored.some(({ candidate }) => candidate.topicId === gemini.resolvedTopicId);
     const canAttach =
       gemini.decision === "attach_existing" &&
-      typeof gemini.resolvedTopicId === "string" &&
+      resolvedTopicInCandidates &&
       gemini.confidence >= ATTACH_THRESHOLD &&
       !candidatesCompete;
 
@@ -136,8 +139,12 @@ export class TopicResolverService {
   }
 
   private async resolveWithGemini(queryText: string, scored: ScoredCandidate[]): Promise<GeminiResolution> {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), GEMINI_TIMEOUT_MS);
+
     const response = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${env.GEMINI_API_KEY}`,
+      `https://generativelanguage.googleapis.com/v1beta/models/${env.GEMINI_MODEL}:generateContent?key=${env.GEMINI_API_KEY}`,
+
       {
         method: "POST",
         headers: {
@@ -159,12 +166,20 @@ export class TopicResolverService {
             responseMimeType: "application/json",
           },
         }),
+        signal: controller.signal,
       },
-    ).catch((error) => {
-      throw new TemporaryDependencyError(
-        `topic resolver Gemini request failed: ${error instanceof Error ? error.message : "unknown error"}`,
-      );
-    });
+    )
+      .catch((error) => {
+        if (error instanceof Error && error.name === "AbortError") {
+          throw new TemporaryDependencyError("topic resolver Gemini request timed out");
+        }
+        throw new TemporaryDependencyError(
+          `topic resolver Gemini request failed: ${error instanceof Error ? error.message : "unknown error"}`,
+        );
+      })
+      .finally(() => {
+        clearTimeout(timeout);
+      });
 
     if (!response.ok) {
       throw new TemporaryDependencyError(`topic resolver Gemini request failed with ${response.status}`);
@@ -203,6 +218,7 @@ export class TopicResolverService {
       "Return JSON only with keys: decision, resolvedTopicId, confidence, reason.",
       "decision must be attach_existing or create_new.",
       "confidence must be a number between 0 and 1.",
+      "When decision is attach_existing, resolvedTopicId MUST be one of the provided candidate topicIds.",
       "If create_new, resolvedTopicId can be omitted.",
       "",
       `queryText: ${queryText}`,

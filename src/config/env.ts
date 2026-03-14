@@ -35,6 +35,7 @@ const envSchema = z
     LEASE_TTL_SECONDS: requiredPositiveInt("LEASE_TTL_SECONDS"),
     VERTEX_USE_REAL_API: requiredBooleanString("VERTEX_USE_REAL_API"),
     GEMINI_API_KEY: z.string().trim().min(1).optional(),
+    GEMINI_MODEL: z.string().trim().min(1).default("gemini-3-flash"),
   })
   .superRefine((data, ctx) => {
     if (data.VERTEX_USE_REAL_API && !data.GEMINI_API_KEY) {

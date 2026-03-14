@@ -134,4 +134,56 @@ describe("TopicResolverService", () => {
       TemporaryDependencyError,
     );
   });
+
+  it("falls back to create_new when Gemini picks a topic outside candidates", async () => {
+    env.VERTEX_USE_REAL_API = true;
+    env.GEMINI_API_KEY = "dummy-key";
+
+    const service = new TopicResolverService();
+    (
+      service as unknown as {
+        topicRepository: { listCandidates: () => Promise<unknown[]> };
+        atomRepository: { getByIds: () => Promise<unknown[]> };
+      }
+    ).topicRepository = {
+      listCandidates: vi.fn().mockResolvedValue([
+        { topicId: "tp-1", title: "Topic one", status: "active" },
+        { topicId: "tp-2", title: "Topic two", status: "active" },
+      ]),
+    };
+    (
+      service as unknown as {
+        atomRepository: { getByIds: () => Promise<unknown[]> };
+      }
+    ).atomRepository = {
+      getByIds: vi.fn().mockResolvedValue([{ title: "one", claim: "topic one details" }]),
+    };
+
+    vi.spyOn(globalThis, "fetch").mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        candidates: [
+          {
+            content: {
+              parts: [
+                {
+                  text: JSON.stringify({
+                    decision: "attach_existing",
+                    resolvedTopicId: "tp-outside",
+                    confidence: 0.95,
+                    reason: "closest match",
+                  }),
+                },
+              ],
+            },
+          },
+        ],
+      }),
+    } as Response);
+
+    const result = await service.resolve(makeEnvelope({ text: "topic one details" }), "input-4", ["a4"]);
+
+    expect(result.resolutionMode).toBe("new");
+    expect(result.resolvedTopicId).toBe("topic-hint");
+  });
 });
