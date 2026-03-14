@@ -1,4 +1,4 @@
-import { FieldValue } from "@google-cloud/firestore";
+import { FieldValue, Timestamp } from "@google-cloud/firestore";
 import { getFirestore } from "../core/firestore.js";
 
 export type PipelineBundleRecord = {
@@ -10,7 +10,7 @@ export type PipelineBundleRecord = {
   atomCount: number;
   sourceAtomIds?: string[];
   sourceInputId?: string;
-  bundleStatus?: "created" | "applied" | "error";
+  bundleStatus?: "created" | "applying" | "applied" | "error";
   descStatus?: "pending" | "described" | "error";
 };
 
@@ -22,12 +22,27 @@ export type PipelineBundleSnapshot = {
   atomCount: number;
   sourceAtomIds: string[];
   sourceInputId?: string;
-  bundleStatus: "created" | "applied" | "error";
+  bundleStatus: "created" | "applying" | "applied" | "error";
   descStatus: "pending" | "described" | "error";
+  appliedAt?: unknown;
+  descVersion: number;
 };
 
 export class PipelineBundleRepository {
   private readonly firestore = getFirestore();
+
+  private toMillis(value: unknown): number | null {
+    if (value instanceof Timestamp) {
+      return value.toMillis();
+    }
+    if (value instanceof Date) {
+      return value.getTime();
+    }
+    if (typeof value === "number") {
+      return value;
+    }
+    return null;
+  }
 
   docRef(workspaceId: string, topicId: string, bundleId: string) {
     return this.firestore.doc(
@@ -54,27 +69,113 @@ export class PipelineBundleRepository {
     );
   }
 
-  async markApplied(workspaceId: string, topicId: string, bundleId: string) {
+  async markApplied(workspaceId: string, topicId: string, bundleId: string): Promise<boolean> {
+    const ref = this.docRef(workspaceId, topicId, bundleId);
+    return this.firestore.runTransaction(async (tx) => {
+      const snapshot = await tx.get(ref);
+      if (snapshot.get("appliedAt")) {
+        return false;
+      }
+      tx.set(
+        ref,
+        {
+          bundleStatus: "applied",
+          appliedAt: FieldValue.serverTimestamp(),
+          applyingAt: FieldValue.delete(),
+          applyingTraceId: FieldValue.delete(),
+          updatedAt: FieldValue.serverTimestamp(),
+        },
+        { merge: true },
+      );
+      return true;
+    });
+  }
+
+  async tryStartApply(
+    workspaceId: string,
+    topicId: string,
+    bundleId: string,
+    traceId: string,
+    staleAfterMs: number,
+  ): Promise<boolean> {
+    const ref = this.docRef(workspaceId, topicId, bundleId);
+    return this.firestore.runTransaction(async (tx) => {
+      const snapshot = await tx.get(ref);
+      if (snapshot.get("appliedAt")) {
+        return false;
+      }
+      const status = snapshot.get("bundleStatus");
+      if (status === "applying") {
+        const applyingAtMillis = this.toMillis(snapshot.get("applyingAt"));
+        if (typeof applyingAtMillis !== "number") {
+          return false;
+        }
+        if (Date.now() - applyingAtMillis < staleAfterMs) {
+          return false;
+        }
+      }
+      tx.set(
+        ref,
+        {
+          bundleStatus: "applying",
+          applyingAt: FieldValue.serverTimestamp(),
+          applyingTraceId: traceId,
+          updatedAt: FieldValue.serverTimestamp(),
+        },
+        { merge: true },
+      );
+      return true;
+    });
+  }
+
+  async markApplyFailed(
+    workspaceId: string,
+    topicId: string,
+    bundleId: string,
+    errorCode: string,
+    message: string,
+  ): Promise<void> {
     await this.docRef(workspaceId, topicId, bundleId).set(
       {
-        bundleStatus: "applied",
-        appliedAt: FieldValue.serverTimestamp(),
+        bundleStatus: "error",
+        applyError: {
+          code: errorCode,
+          message,
+        },
+        applyingAt: FieldValue.delete(),
+        applyingTraceId: FieldValue.delete(),
         updatedAt: FieldValue.serverTimestamp(),
       },
       { merge: true },
     );
   }
 
-  async markDescribed(workspaceId: string, topicId: string, bundleId: string, descRef: string) {
-    await this.docRef(workspaceId, topicId, bundleId).set(
-      {
-        descStatus: "described",
-        descRef,
-        describedAt: FieldValue.serverTimestamp(),
-        updatedAt: FieldValue.serverTimestamp(),
-      },
-      { merge: true },
-    );
+  async markDescribed(
+    workspaceId: string,
+    topicId: string,
+    bundleId: string,
+    descRef: string,
+  ): Promise<number> {
+    const ref = this.docRef(workspaceId, topicId, bundleId);
+    return this.firestore.runTransaction(async (tx) => {
+      const snapshot = await tx.get(ref);
+      const currentVersion =
+        typeof snapshot.get("descVersion") === "number" ? snapshot.get("descVersion") : 0;
+      const currentRef = snapshot.get("descRef");
+      const nextVersion = currentRef === descRef ? currentVersion : currentVersion + 1;
+      tx.set(
+        ref,
+        {
+          descStatus: "described",
+          descRef,
+          descVersion: nextVersion,
+          describedAt: FieldValue.serverTimestamp(),
+          updatedAt: FieldValue.serverTimestamp(),
+        },
+        { merge: true },
+      );
+      return nextVersion;
+    });
   }
 
   async get(
@@ -94,6 +195,8 @@ export class PipelineBundleRepository {
     const sourceInputId = snapshot.get("sourceInputId");
     const bundleStatus = snapshot.get("bundleStatus");
     const descStatus = snapshot.get("descStatus");
+    const appliedAt = snapshot.get("appliedAt");
+    const descVersion = snapshot.get("descVersion");
 
     return {
       bundleId,
@@ -106,9 +209,13 @@ export class PipelineBundleRepository {
         : [],
       sourceInputId: typeof sourceInputId === "string" ? sourceInputId : undefined,
       bundleStatus:
-        bundleStatus === "applied" || bundleStatus === "error" ? bundleStatus : "created",
+        bundleStatus === "applying" || bundleStatus === "applied" || bundleStatus === "error"
+          ? bundleStatus
+          : "created",
       descStatus:
         descStatus === "described" || descStatus === "error" ? descStatus : "pending",
+      appliedAt,
+      descVersion: typeof descVersion === "number" ? descVersion : 0,
     };
   }
 }

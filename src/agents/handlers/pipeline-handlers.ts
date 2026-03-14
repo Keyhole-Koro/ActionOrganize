@@ -174,12 +174,31 @@ class DraftUpdatedHandler implements AgentHandler {
     const draftVersion = requireNumber(envelope.payload, "draftVersion");
     const appendedAtomIds = requireStringArray(envelope.payload, "appendedAtomIds");
     const inputId = optionalString(envelope.payload, "inputId");
-    const { bundleId } = await pipelineWriteService.onDraftUpdated(
+    const { bundleId, schemaVersion } = await pipelineWriteService.onDraftUpdated(
       envelope,
       draftVersion,
       appendedAtomIds,
       inputId,
     );
+    const proposedSchemaVersion =
+      typeof envelope.payload.proposedSchemaVersion === "number"
+        ? envelope.payload.proposedSchemaVersion
+        : undefined;
+    const schemaEvents =
+      typeof proposedSchemaVersion === "number" && proposedSchemaVersion > schemaVersion
+        ? [
+            {
+              type: "topic.schema_updated",
+              topicId: envelope.topicId,
+              orderingKey: envelope.topicId,
+              idempotencyKey: `type:topic.schema_updated/topicId:${envelope.topicId}/schemaVersion:${proposedSchemaVersion}`,
+              payload: {
+                topicId: envelope.topicId,
+                schemaVersion: proposedSchemaVersion,
+              },
+            },
+          ]
+        : [];
 
     return {
       ack: true,
@@ -196,6 +215,7 @@ class DraftUpdatedHandler implements AgentHandler {
             inputId,
           },
         },
+        ...schemaEvents,
       ],
     };
   }
@@ -351,6 +371,9 @@ class NodeRollupRequestedHandler implements AgentHandler {
     const nodeId = requireString(envelope.payload, "nodeId");
     const generation = requireNumber(envelope.payload, "generation");
     const result = await pipelineWriteService.onNodeRollupRequested(envelope, nodeId, generation);
+    if (result.skipped) {
+      return { ack: true, emittedEvents: [] };
+    }
     return {
       ack: true,
       emittedEvents: [

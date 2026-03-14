@@ -91,6 +91,29 @@ export class PipelineWriteService {
     }
 
     const bundle = await this.bundleRepository.get(envelope.workspaceId, envelope.topicId, bundleId);
+    if (bundle?.appliedAt) {
+      return {
+        outlineVersion: sourceDraftVersion,
+        changedNodeIds: [],
+        descRef,
+        reissuedAtomIds: [],
+      };
+    }
+    const applyStarted = await this.bundleRepository.tryStartApply(
+      envelope.workspaceId,
+      envelope.topicId,
+      bundleId,
+      envelope.traceId,
+      env.LEASE_TTL_SECONDS * 1000,
+    );
+    if (!applyStarted) {
+      return {
+        outlineVersion: sourceDraftVersion,
+        changedNodeIds: [],
+        descRef,
+        reissuedAtomIds: [],
+      };
+    }
     const outlineSummary = this.toOutlineSummary(envelope.topicId, bundleId, sourceDraftVersion);
     const outlineMap = this.toOutlineMap(envelope.topicId, rootNodeId);
     const descHtml = this.toBundleDescHtml(envelope.topicId, bundleId, sourceDraftVersion, bundle);
@@ -127,6 +150,13 @@ export class PipelineWriteService {
       await this.bundleDescriptionRepository.writeHtml(descRef, descHtml);
       await this.bundleDescriptionRepository.writeMarkdown(outlineRef, `${outlineSummary}\n\n${outlineMap}`);
     } catch (error) {
+      await this.bundleRepository.markApplyFailed(
+        envelope.workspaceId,
+        envelope.topicId,
+        bundleId,
+        "artifact_write_failed",
+        error instanceof Error ? error.message : "unknown error",
+      );
       throw new TemporaryDependencyError(
         `failed to write bundle/outline artifacts: ${error instanceof Error ? error.message : "unknown error"}`,
       );
@@ -288,9 +318,15 @@ export class PipelineWriteService {
     envelope: EventEnvelope,
     nodeId: string,
     generation: number,
-  ): Promise<{ topicId: string; nodeId: string }> {
+  ): Promise<{ topicId: string; nodeId: string; skipped: boolean }> {
     if (!this.isFirestoreBackend()) {
-      return { topicId: envelope.topicId, nodeId };
+      return { topicId: envelope.topicId, nodeId, skipped: false };
+    }
+
+    const existing = await this.nodeRepository.docRef(envelope.workspaceId, envelope.topicId, nodeId).get();
+    const watermark = existing.get("rollupWatermark");
+    if (typeof watermark === "number" && watermark >= generation) {
+      return { topicId: envelope.topicId, nodeId, skipped: true };
     }
 
     await this.nodeRepository.upsert({
@@ -305,7 +341,7 @@ export class PipelineWriteService {
       detailHtml: `<section><h1>${nodeId}</h1><p>Rollup generation ${generation}</p></section>`,
     });
 
-    return { topicId: envelope.topicId, nodeId };
+    return { topicId: envelope.topicId, nodeId, skipped: false };
   }
 
   async onTopicSchemaUpdated(envelope: EventEnvelope, schemaVersion: number) {

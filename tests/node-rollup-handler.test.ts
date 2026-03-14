@@ -67,4 +67,22 @@ describe("NodeRollupRequestedHandler", () => {
       },
     ]);
   });
+
+  it("acknowledges without emitting when generation is stale", async () => {
+    onNodeRollupRequestedMock.mockResolvedValue({
+      topicId: "topic-1",
+      nodeId: "node-42",
+      skipped: true,
+    });
+
+    const { pipelineHandlers } = await import("../src/agents/handlers/pipeline-handlers.js");
+    const handler = pipelineHandlers.find((h) => h.eventType === "node.rollup_requested");
+    expect(handler).toBeDefined();
+
+    const envelope = makeEnvelope({ nodeId: "node-42", generation: 2 });
+    const result = await handler!.handle({ envelope, attributes: {} });
+
+    expect(onNodeRollupRequestedMock).toHaveBeenCalledWith(envelope, "node-42", 2);
+    expect(result).toEqual({ ack: true, emittedEvents: [] });
+  });
 });

@@ -66,14 +66,20 @@ describe("PipelineWriteService.onBundleCreated", () => {
   it("throws TemporaryDependencyError when bundle description write fails", async () => {
     const service = new PipelineWriteService();
     const get = vi.fn().mockResolvedValue(null);
+    const tryStartApply = vi.fn().mockResolvedValue(true);
+    const markApplyFailed = vi.fn().mockResolvedValue(undefined);
     const writeHtml = vi.fn().mockRejectedValue(new Error("gcs unavailable"));
 
     (
       service as unknown as {
-        bundleRepository: { get: typeof get };
+        bundleRepository: {
+          get: typeof get;
+          tryStartApply: typeof tryStartApply;
+          markApplyFailed: typeof markApplyFailed;
+        };
         bundleDescriptionRepository: { writeHtml: typeof writeHtml };
       }
-    ).bundleRepository = { get };
+    ).bundleRepository = { get, tryStartApply, markApplyFailed };
 
     (
       service as unknown as {
@@ -89,5 +95,39 @@ describe("PipelineWriteService.onBundleCreated", () => {
     );
 
     await expect(promise).rejects.toBeInstanceOf(TemporaryDependencyError);
+    expect(tryStartApply).toHaveBeenCalledWith("ws-1", "topic-1", "bundle-1", "trace-1", 120000);
+    expect(markApplyFailed).toHaveBeenCalledWith(
+      "ws-1",
+      "topic-1",
+      "bundle-1",
+      "artifact_write_failed",
+      "gcs unavailable",
+    );
+  });
+
+  it("returns no-op when apply reservation cannot be acquired", async () => {
+    const service = new PipelineWriteService();
+    const get = vi.fn().mockResolvedValue(null);
+    const tryStartApply = vi.fn().mockResolvedValue(false);
+
+    (
+      service as unknown as {
+        bundleRepository: { get: typeof get; tryStartApply: typeof tryStartApply };
+      }
+    ).bundleRepository = { get, tryStartApply };
+
+    const result = await service.onBundleCreated(
+      makeEnvelope("bundle.created"),
+      "bundle-2",
+      2,
+      "input-2",
+    );
+
+    expect(result).toEqual({
+      outlineVersion: 2,
+      changedNodeIds: [],
+      descRef: "mind/bundle_desc/bundle-2/v2.html",
+      reissuedAtomIds: [],
+    });
   });
 });
