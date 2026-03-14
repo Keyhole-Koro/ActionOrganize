@@ -18,6 +18,7 @@ type DraftBundleResult = {
 type OutlineApplyResult = {
   outlineVersion: number;
   changedNodeIds: string[];
+  descRef: string;
 };
 
 export class PipelineWriteService {
@@ -73,7 +74,7 @@ export class PipelineWriteService {
     const descRef = this.toBundleDescRef(bundleId, sourceDraftVersion);
 
     if (!this.isFirestoreBackend()) {
-      return { outlineVersion: sourceDraftVersion, changedNodeIds };
+      return { outlineVersion: sourceDraftVersion, changedNodeIds, descRef };
     }
 
     const bundle = await this.bundleRepository.get(envelope.workspaceId, envelope.topicId, bundleId);
@@ -124,12 +125,6 @@ export class PipelineWriteService {
     });
 
     await this.bundleRepository.markApplied(envelope.workspaceId, envelope.topicId, bundleId);
-    await this.bundleRepository.markDescribed(
-      envelope.workspaceId,
-      envelope.topicId,
-      bundleId,
-      descRef,
-    );
 
     if (inputId) {
       await this.inputProgressRepository.advance({
@@ -144,7 +139,20 @@ export class PipelineWriteService {
       });
     }
 
-    return { outlineVersion, changedNodeIds };
+    return { outlineVersion, changedNodeIds, descRef };
+  }
+
+  async onBundleDescribed(envelope: EventEnvelope, bundleId: string, descRef: string) {
+    if (!this.isFirestoreBackend()) {
+      return;
+    }
+
+    await this.bundleRepository.markDescribed(
+      envelope.workspaceId,
+      envelope.topicId,
+      bundleId,
+      descRef,
+    );
   }
 
   async onOutlineUpdated(

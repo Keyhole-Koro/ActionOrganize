@@ -206,7 +206,7 @@ class BundleCreatedHandler implements AgentHandler {
     const bundleId = requireString(envelope.payload, "bundleId");
     const sourceDraftVersion = requireNumber(envelope.payload, "sourceDraftVersion");
     const inputId = optionalString(envelope.payload, "inputId");
-    const { outlineVersion, changedNodeIds } = await pipelineWriteService.onBundleCreated(
+    const { outlineVersion, changedNodeIds, descRef } = await pipelineWriteService.onBundleCreated(
       envelope,
       bundleId,
       sourceDraftVersion,
@@ -223,6 +223,7 @@ class BundleCreatedHandler implements AgentHandler {
           payload: {
             topicId: envelope.topicId,
             bundleId,
+            descRef,
           },
         },
         {
@@ -246,7 +247,10 @@ class BundleCreatedHandler implements AgentHandler {
 class BundleDescribedHandler implements AgentHandler {
   readonly eventType = "bundle.described";
 
-  async handle(): Promise<AgentResult> {
+  async handle({ envelope }: AgentContext): Promise<AgentResult> {
+    const bundleId = requireString(envelope.payload, "bundleId");
+    const descRef = requireString(envelope.payload, "descRef");
+    await pipelineWriteService.onBundleDescribed(envelope, bundleId, descRef);
     return { ack: true, emittedEvents: [] };
   }
 }

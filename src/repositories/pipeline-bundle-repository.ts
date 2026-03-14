@@ -67,6 +67,7 @@ export class PipelineBundleRepository {
       {
         descStatus: "described",
         descRef,
+        describedAt: FieldValue.serverTimestamp(),
         updatedAt: FieldValue.serverTimestamp(),
       },
       { merge: true },
