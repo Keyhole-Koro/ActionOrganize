@@ -27,6 +27,17 @@ function requireNumber(payload: Payload, key: string): number {
   return value;
 }
 
+function optionalString(payload: Payload, key: string): string | undefined {
+  const value = payload[key];
+  if (value === undefined) {
+    return undefined;
+  }
+  if (typeof value !== "string" || value.length === 0) {
+    throw new InvalidEventError(`payload.${key} must be a string`);
+  }
+  return value;
+}
+
 class MediaReceivedHandler implements AgentHandler {
   readonly eventType = "media.received";
 
@@ -35,7 +46,13 @@ class MediaReceivedHandler implements AgentHandler {
 
     return {
       ack: true,
-      emittedEvents: [{ type: "input.received", topicId: envelope.topicId, inputId }],
+      emittedEvents: [
+        {
+          type: "input.received",
+          topicId: envelope.topicId,
+          payload: { topicId: envelope.topicId, inputId },
+        },
+      ],
     };
   }
 }
@@ -45,10 +62,17 @@ class InputReceivedHandler implements AgentHandler {
 
   async handle({ envelope }: AgentContext): Promise<AgentResult> {
     const inputId = requireString(envelope.payload, "inputId");
+    const atomIds = [`atom:${envelope.topicId}:${inputId}:0`];
 
     return {
       ack: true,
-      emittedEvents: [{ type: "atom.created", topicId: envelope.topicId, inputId }],
+      emittedEvents: [
+        {
+          type: "atom.created",
+          topicId: envelope.topicId,
+          payload: { topicId: envelope.topicId, inputId, atomIds },
+        },
+      ],
     };
   }
 }
@@ -58,10 +82,24 @@ class AtomCreatedHandler implements AgentHandler {
 
   async handle({ envelope }: AgentContext): Promise<AgentResult> {
     const inputId = requireString(envelope.payload, "inputId");
+    const atomIds = requireStringArray(envelope.payload, "atomIds");
 
     return {
       ack: true,
-      emittedEvents: [{ type: "topic.resolved", topicId: envelope.topicId, inputId }],
+      emittedEvents: [
+        {
+          type: "topic.resolved",
+          topicId: envelope.topicId,
+          orderingKey: envelope.topicId,
+          payload: {
+            resolvedTopicId: envelope.topicId,
+            inputId,
+            atomIds,
+            resolutionMode: "attach_existing",
+            resolutionConfidence: 0.8,
+          },
+        },
+      ],
     };
   }
 }
@@ -72,10 +110,23 @@ class TopicResolvedHandler implements AgentHandler {
   async handle({ envelope }: AgentContext): Promise<AgentResult> {
     const resolvedTopicId = requireString(envelope.payload, "resolvedTopicId");
     const inputId = requireString(envelope.payload, "inputId");
+    const atomIds = requireStringArray(envelope.payload, "atomIds");
 
     return {
       ack: true,
-      emittedEvents: [{ type: "draft.updated", topicId: resolvedTopicId, inputId }],
+      emittedEvents: [
+        {
+          type: "draft.updated",
+          topicId: resolvedTopicId,
+          orderingKey: resolvedTopicId,
+          payload: {
+            topicId: resolvedTopicId,
+            draftVersion: 1,
+            appendedAtomIds: atomIds,
+            inputId,
+          },
+        },
+      ],
     };
   }
 }
@@ -88,7 +139,18 @@ class DraftUpdatedHandler implements AgentHandler {
 
     return {
       ack: true,
-      emittedEvents: [{ type: "bundle.created", topicId: envelope.topicId, draftVersion }],
+      emittedEvents: [
+        {
+          type: "bundle.created",
+          topicId: envelope.topicId,
+          orderingKey: envelope.topicId,
+          payload: {
+            topicId: envelope.topicId,
+            bundleId: `bundle:${envelope.topicId}:v${draftVersion}`,
+            sourceDraftVersion: draftVersion,
+          },
+        },
+      ],
     };
   }
 }
@@ -98,12 +160,22 @@ class BundleCreatedHandler implements AgentHandler {
 
   async handle({ envelope }: AgentContext): Promise<AgentResult> {
     const bundleId = requireString(envelope.payload, "bundleId");
+    const sourceDraftVersion = requireNumber(envelope.payload, "sourceDraftVersion");
 
     return {
       ack: true,
       emittedEvents: [
-        { type: "bundle.described", topicId: envelope.topicId, bundleId },
-        { type: "outline.updated", topicId: envelope.topicId, bundleId },
+        {
+          type: "outline.updated",
+          topicId: envelope.topicId,
+          orderingKey: envelope.topicId,
+          payload: {
+            topicId: envelope.topicId,
+            bundleId,
+            outlineVersion: sourceDraftVersion,
+            changedNodeIds: [`node:${envelope.topicId}:root`],
+          },
+        },
       ],
     };
   }
@@ -130,7 +202,12 @@ class OutlineUpdatedHandler implements AgentHandler {
       emittedEvents: changedNodeIds.map((nodeId) => ({
         type: "topic.node_changed",
         topicId: envelope.topicId,
-        nodeId,
+        orderingKey: nodeId,
+        payload: {
+          topicId: envelope.topicId,
+          nodeId,
+          reason: "outline.updated",
+        },
       })),
     };
   }
@@ -144,7 +221,18 @@ class TopicNodeChangedHandler implements AgentHandler {
 
     return {
       ack: true,
-      emittedEvents: [{ type: "node.rollup_updated", topicId: envelope.topicId, nodeId }],
+      emittedEvents: [
+        {
+          type: "node.rollup_requested",
+          topicId: envelope.topicId,
+          orderingKey: nodeId,
+          payload: {
+            topicId: envelope.topicId,
+            nodeId,
+            generation: 1,
+          },
+        },
+      ],
     };
   }
 }
@@ -162,8 +250,22 @@ class TopicMetricsUpdatedHandler implements AgentHandler {
   readonly eventType = "topic.metrics.updated";
 
   async handle({ envelope }: AgentContext): Promise<AgentResult> {
-    requireString(envelope.payload, "topicId");
-    return { ack: true, emittedEvents: [] };
+    const topicId = optionalString(envelope.payload, "topicId") ?? envelope.topicId;
+    return {
+      ack: true,
+      emittedEvents: [
+        {
+          type: "topic.node_changed",
+          topicId,
+          orderingKey: topicId,
+          payload: {
+            topicId,
+            nodeId: `node:${topicId}:root`,
+            reason: "topic.metrics.updated",
+          },
+        },
+      ],
+    };
   }
 }
 

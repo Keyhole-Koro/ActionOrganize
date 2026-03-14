@@ -1,0 +1,18 @@
+syntax = "proto3";
+
+package act.v1;
+
+option go_package = "act-api/gen/act/v1;actv1";
+
+message RunActRequest {
+  string session_id = 1;
+  string user_input = 2;
+}
+
+message RunActResponse {
+  string text = 1;
+}
+
+service ActService {
+  rpc RunAct(RunActRequest) returns (stream RunActResponse) {}
+}

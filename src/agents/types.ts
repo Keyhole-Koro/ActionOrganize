@@ -2,7 +2,12 @@ import type { EventEnvelope, PubsubAttributes } from "../models/envelope.js";
 
 export type AgentResult = {
   ack: true;
-  emittedEvents?: Array<Record<string, string | number>>;
+  emittedEvents?: Array<{
+    type: string;
+    topicId: string;
+    payload: Record<string, unknown>;
+    orderingKey?: string;
+  }>;
 };
 
 export type AgentContext = {

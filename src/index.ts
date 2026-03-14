@@ -11,9 +11,13 @@ server.listen(env.PORT, "0.0.0.0", () => {
     {
       port: env.PORT,
       project: env.GOOGLE_CLOUD_PROJECT,
+      stateBackend: env.STATE_BACKEND,
       pubsubEmulatorHost: env.PUBSUB_EMULATOR_HOST,
+      pubsubTopicName: env.PUBSUB_TOPIC_NAME,
+      pubsubPublishEnabled: env.PUBSUB_PUBLISH_ENABLED,
       firestoreEmulatorHost: env.FIRESTORE_EMULATOR_HOST,
       storageEmulatorHost: env.STORAGE_EMULATOR_HOST,
+      leaseTtlSeconds: env.LEASE_TTL_SECONDS,
       vertexUseRealApi: env.VERTEX_USE_REAL_API,
     },
     "organize server started",

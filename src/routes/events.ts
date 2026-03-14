@@ -1,20 +1,17 @@
 import { Router } from "express";
 import { ZodError } from "zod";
-import { getAgentHandler } from "../agents/registry.js";
-import { AppError, InvalidEventError } from "../core/errors.js";
+import { AppError, DuplicateEventError, InvalidEventError } from "../core/errors.js";
 import { decodePushEvent } from "../core/pubsub.js";
 import { logger } from "../lib/logger.js";
+import { EventProcessor } from "../services/event-processor.js";
 
 export const eventsRouter = Router();
+const eventProcessor = new EventProcessor();
 
 eventsRouter.post("/events", async (req, res) => {
   try {
     const decoded = decodePushEvent(req.body);
-    const handler = getAgentHandler(decoded.envelope.type);
-    const result = await handler.handle({
-      envelope: decoded.envelope,
-      attributes: decoded.attributes,
-    });
+    const result = await eventProcessor.process(decoded);
 
     logger.info(
       {
@@ -53,6 +50,17 @@ eventsRouter.post("/events", async (req, res) => {
         ok: false,
         ack: true,
         error: "INVALID_ARGUMENT",
+        stage: error.stage,
+      });
+      return;
+    }
+
+    if (error instanceof DuplicateEventError) {
+      logger.info({ error: error.message, stage: error.stage }, "duplicate event skipped");
+      res.status(200).json({
+        ok: true,
+        ack: true,
+        duplicate: true,
         stage: error.stage,
       });
       return;

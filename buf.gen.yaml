@@ -1,0 +1,21 @@
+version: v1
+plugins:
+  # Go (act-api) 向け
+  - plugin: buf.build/protocolbuffers/go
+    out: ../ActionAct/act-api/gen
+    opt: paths=source_relative
+  - plugin: buf.build/connectrpc/go
+    out: ../ActionAct/act-api/gen
+    opt: paths=source_relative
+
+  # TypeScript (frontend) 向け
+  - plugin: buf.build/bufbuild/es
+    out: ../frontend/src/gen
+    opt: target=ts
+  - plugin: buf.build/connectrpc/es
+    out: ../frontend/src/gen
+    opt: target=ts
+
+  # Python (act-adk-worker) 向け DTO生成
+  - plugin: buf.build/protocolbuffers/python
+    out: ../ActionAct/act-adk-worker/app/gen

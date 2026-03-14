@@ -36,3 +36,10 @@ export class TemporaryDependencyError extends AppError {
     this.name = "TemporaryDependencyError";
   }
 }
+
+export class DuplicateEventError extends AppError {
+  constructor(message: string) {
+    super(message, { statusCode: 200, retryable: false, stage: "IDEMPOTENCY_CHECK" });
+    this.name = "DuplicateEventError";
+  }
+}
