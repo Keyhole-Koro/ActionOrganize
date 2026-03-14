@@ -6,6 +6,7 @@ import { InputProgressRepository } from "../repositories/input-progress-reposito
 import { NodeRepository } from "../repositories/node-repository.js";
 import { OutlineRepository } from "../repositories/outline-repository.js";
 import { PipelineBundleRepository } from "../repositories/pipeline-bundle-repository.js";
+import type { PipelineBundleSnapshot } from "../repositories/pipeline-bundle-repository.js";
 import { TopicRepository } from "../repositories/topic-repository.js";
 import { BundleDescriptionRepository } from "../repositories/bundle-description-repository.js";
 
@@ -70,11 +71,13 @@ export class PipelineWriteService {
     const rootNodeId = `node:${envelope.topicId}:root`;
     const changedNodeIds = [rootNodeId];
     const descRef = this.toBundleDescRef(bundleId, sourceDraftVersion);
-    const descHtml = this.toBundleDescHtml(envelope.topicId, bundleId, sourceDraftVersion);
 
     if (!this.isFirestoreBackend()) {
       return { outlineVersion: sourceDraftVersion, changedNodeIds };
     }
+
+    const bundle = await this.bundleRepository.get(envelope.workspaceId, envelope.topicId, bundleId);
+    const descHtml = this.toBundleDescHtml(envelope.topicId, bundleId, sourceDraftVersion, bundle);
 
     await this.bundleDescriptionRepository.writeHtml(descRef, descHtml);
 
@@ -254,7 +257,21 @@ export class PipelineWriteService {
     return `mind/bundle_desc/${bundleId}/v${version}.html`;
   }
 
-  private toBundleDescHtml(topicId: string, bundleId: string, sourceDraftVersion: number) {
+  private toBundleDescHtml(
+    topicId: string,
+    bundleId: string,
+    sourceDraftVersion: number,
+    bundle?: PipelineBundleSnapshot | null,
+  ) {
+    const effectiveDraftVersion = bundle?.sourceDraftVersion ?? sourceDraftVersion;
+    const schemaVersion = bundle?.schemaVersion ?? 1;
+    const atomCount = bundle?.atomCount ?? 0;
+    const sourceInputId = bundle?.sourceInputId ?? "n/a";
+    const bundleStatus = bundle?.bundleStatus ?? "created";
+    const escapedTopicId = this.escapeHtml(topicId);
+    const escapedBundleId = this.escapeHtml(bundleId);
+    const escapedInputId = this.escapeHtml(sourceInputId);
+
     return [
       "<!doctype html>",
       '<html lang="en">',
@@ -264,11 +281,26 @@ export class PipelineWriteService {
       "    <title>Pipeline Bundle Description</title>",
       "  </head>",
       "  <body>",
-      `    <h1>Bundle ${bundleId}</h1>`,
-      `    <p>Topic: ${topicId}</p>`,
-      `    <p>Source draft version: ${sourceDraftVersion}</p>`,
+      `    <h1>Bundle ${escapedBundleId}</h1>`,
+      "    <ul>",
+      `      <li>Topic: ${escapedTopicId}</li>`,
+      `      <li>Source draft version: ${effectiveDraftVersion}</li>`,
+      `      <li>Schema version: ${schemaVersion}</li>`,
+      `      <li>Atom count: ${atomCount}</li>`,
+      `      <li>Source input: ${escapedInputId}</li>`,
+      `      <li>Bundle status: ${bundleStatus}</li>`,
+      "    </ul>",
       "  </body>",
       "</html>",
     ].join("\n");
+  }
+
+  private escapeHtml(value: string) {
+    return value
+      .replaceAll("&", "&amp;")
+      .replaceAll("<", "&lt;")
+      .replaceAll(">", "&gt;")
+      .replaceAll('"', "&quot;")
+      .replaceAll("'", "&#39;");
   }
 }

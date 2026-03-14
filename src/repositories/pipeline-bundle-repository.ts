@@ -13,6 +13,17 @@ export type PipelineBundleRecord = {
   descStatus?: "pending" | "described" | "error";
 };
 
+export type PipelineBundleSnapshot = {
+  bundleId: string;
+  topicId: string;
+  sourceDraftVersion: number;
+  schemaVersion: number;
+  atomCount: number;
+  sourceInputId?: string;
+  bundleStatus: "created" | "applied" | "error";
+  descStatus: "pending" | "described" | "error";
+};
+
 export class PipelineBundleRepository {
   private readonly firestore = getFirestore();
 
@@ -60,5 +71,36 @@ export class PipelineBundleRepository {
       },
       { merge: true },
     );
+  }
+
+  async get(
+    workspaceId: string,
+    topicId: string,
+    bundleId: string,
+  ): Promise<PipelineBundleSnapshot | null> {
+    const snapshot = await this.docRef(workspaceId, topicId, bundleId).get();
+    if (!snapshot.exists) {
+      return null;
+    }
+
+    const sourceDraftVersion = snapshot.get("sourceDraftVersion");
+    const schemaVersion = snapshot.get("schemaVersion");
+    const atomCount = snapshot.get("atomCount");
+    const sourceInputId = snapshot.get("sourceInputId");
+    const bundleStatus = snapshot.get("bundleStatus");
+    const descStatus = snapshot.get("descStatus");
+
+    return {
+      bundleId,
+      topicId,
+      sourceDraftVersion: typeof sourceDraftVersion === "number" ? sourceDraftVersion : 1,
+      schemaVersion: typeof schemaVersion === "number" ? schemaVersion : 1,
+      atomCount: typeof atomCount === "number" ? atomCount : 0,
+      sourceInputId: typeof sourceInputId === "string" ? sourceInputId : undefined,
+      bundleStatus:
+        bundleStatus === "applied" || bundleStatus === "error" ? bundleStatus : "created",
+      descStatus:
+        descStatus === "described" || descStatus === "error" ? descStatus : "pending",
+    };
   }
 }
