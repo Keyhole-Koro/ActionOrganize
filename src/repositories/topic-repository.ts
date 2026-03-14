@@ -8,6 +8,12 @@ export type TopicRecord = {
   status?: string;
 };
 
+export type TopicCandidate = {
+  topicId: string;
+  title: string;
+  status: string;
+};
+
 export class TopicRepository {
   private readonly firestore = getFirestore();
 
@@ -32,6 +38,35 @@ export class TopicRepository {
       },
       { merge: true },
     );
+  }
+
+  async get(workspaceId: string, topicId: string): Promise<TopicCandidate | null> {
+    const snapshot = await this.docRef(workspaceId, topicId).get();
+    if (!snapshot.exists) {
+      return null;
+    }
+
+    return {
+      topicId,
+      title: typeof snapshot.get("title") === "string" ? snapshot.get("title") : topicId,
+      status: typeof snapshot.get("status") === "string" ? snapshot.get("status") : "active",
+    };
+  }
+
+  async listCandidates(workspaceId: string, limit = 5): Promise<TopicCandidate[]> {
+    const snapshot = await this.firestore
+      .collection(`workspaces/${workspaceId}/topics`)
+      .limit(Math.max(limit * 3, limit))
+      .get();
+
+    return snapshot.docs
+      .map((doc) => ({
+        topicId: doc.id,
+        title: typeof doc.get("title") === "string" ? doc.get("title") : doc.id,
+        status: typeof doc.get("status") === "string" ? doc.get("status") : "active",
+      }))
+      .filter((topic) => topic.status === "active" || topic.status === "split_child")
+      .slice(0, limit);
   }
 
   async getNextDraftVersion(

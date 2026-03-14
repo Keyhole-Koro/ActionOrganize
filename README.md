@@ -44,7 +44,7 @@ npm run dev
 * event intake
 * event ledger / lease
 * emitted event publish
-* A0/A1/A2/A3b/A3/A4/A7 相当の最小 write path
+* A0/A1/TopicResolver/A2/A3b/A3/A4/A7 相当の最小 write path
   * `inputs/{inputId}`
   * `atoms/{atomId}`
   * `inputProgress/{inputId}`

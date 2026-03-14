@@ -35,4 +35,26 @@ export class AtomRepository {
         { merge: true },
       );
   }
+
+  async getByIds(workspaceId: string, topicId: string, atomIds: string[]) {
+    const snapshots = await Promise.all(
+      atomIds.map((atomId) =>
+        this.firestore.doc(`workspaces/${workspaceId}/topics/${topicId}/atoms/${atomId}`).get(),
+      ),
+    );
+
+    return snapshots.flatMap((snapshot, index) => {
+      if (!snapshot.exists) {
+        return [];
+      }
+
+      return [
+        {
+          atomId: atomIds[index],
+          title: typeof snapshot.get("title") === "string" ? snapshot.get("title") : atomIds[index],
+          claim: typeof snapshot.get("claim") === "string" ? snapshot.get("claim") : "",
+        },
+      ];
+    });
+  }
 }

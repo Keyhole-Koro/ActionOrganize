@@ -2,6 +2,7 @@ import { InvalidEventError } from "../../core/errors.js";
 import { A0A1WriteService } from "../../services/a0-a1-write-service.js";
 import { A2DraftAppenderService } from "../../services/a2-draft-appender-service.js";
 import { PipelineWriteService } from "../../services/pipeline-write-service.js";
+import { TopicResolverService } from "../../services/topic-resolver-service.js";
 import type { AgentContext, AgentHandler, AgentResult } from "../types.js";
 
 type Payload = Record<string, unknown>;
@@ -44,6 +45,7 @@ function optionalString(payload: Payload, key: string): string | undefined {
 const writeService = new A0A1WriteService();
 const draftAppenderService = new A2DraftAppenderService();
 const pipelineWriteService = new PipelineWriteService();
+const topicResolverService = new TopicResolverService();
 
 class MediaReceivedHandler implements AgentHandler {
   readonly eventType = "media.received";
@@ -96,23 +98,26 @@ class AtomCreatedHandler implements AgentHandler {
   async handle({ envelope }: AgentContext): Promise<AgentResult> {
     const inputId = requireString(envelope.payload, "inputId");
     const atomIds = requireStringArray(envelope.payload, "atomIds");
+    const resolution = await topicResolverService.resolve(envelope, inputId, atomIds);
 
     return {
       ack: true,
       emittedEvents: [
         {
           type: "topic.resolved",
-          topicId: envelope.topicId,
-          orderingKey: envelope.topicId,
-          idempotencyKey: `type:topic.resolved/topicId:${envelope.topicId}/inputId:${inputId}`,
+          topicId: resolution.resolvedTopicId,
+          orderingKey: resolution.resolvedTopicId,
+          idempotencyKey: `type:topic.resolved/topicId:${resolution.resolvedTopicId}/inputId:${inputId}`,
           payload: {
-            resolvedTopicId: envelope.topicId,
+            resolvedTopicId: resolution.resolvedTopicId,
             inputId,
             atomIds,
-            resolutionMode: "existing",
-            resolutionConfidence: 0.8,
-            resolutionReason: "center target and primary nodes align with existing topic",
-            topicLifecycleStateAtResolution: "active",
+            resolutionMode: resolution.resolutionMode,
+            resolutionConfidence: resolution.resolutionConfidence,
+            resolutionReason: resolution.resolutionReason,
+            topicLifecycleStateAtResolution: resolution.topicLifecycleStateAtResolution,
+            candidateTopicIds: resolution.candidateTopicIds,
+            candidateTopicStates: resolution.candidateTopicStates,
           },
         },
       ],
