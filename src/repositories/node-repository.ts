@@ -85,4 +85,20 @@ export class NodeRepository {
       schemaVersion: typeof doc.get("schemaVersion") === "number" ? doc.get("schemaVersion") : undefined,
     }));
   }
+
+  async listByParent(workspaceId: string, topicId: string, parentId: string, limit = 200): Promise<NodeCandidate[]> {
+    const snapshot = await this.firestore
+      .collection(`workspaces/${workspaceId}/topics/${topicId}/nodes`)
+      .where("parentId", "==", parentId)
+      .limit(limit)
+      .get();
+
+    return snapshot.docs.map((doc) => ({
+      nodeId: doc.id,
+      title: typeof doc.get("title") === "string" ? doc.get("title") : doc.id,
+      contextSummary:
+        typeof doc.get("contextSummary") === "string" ? doc.get("contextSummary") : undefined,
+      schemaVersion: typeof doc.get("schemaVersion") === "number" ? doc.get("schemaVersion") : undefined,
+    }));
+  }
 }

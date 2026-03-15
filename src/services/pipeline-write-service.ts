@@ -13,6 +13,9 @@ import { BundleDescriptionRepository } from "../repositories/bundle-description-
 import { EdgeRepository } from "../repositories/edge-repository.js";
 import { AtomRepository } from "../repositories/atom-repository.js";
 import { dedupeNodeIds, resolveNode } from "./cleaner-entity-resolution.js";
+import { callGemini, MockGeminiError } from "../lib/gemini-client.js";
+import { writeHtml } from "../lib/gcs-writer.js";
+import { logger } from "../lib/logger.js";
 
 type DraftBundleResult = {
   bundleId: string;
@@ -51,6 +54,16 @@ type ClusterGroup = {
 type HierarchyPlan = {
   rootClaims: Array<{ nodeId: string; title: string }>;
   clusters: ClusterGroup[];
+};
+
+type SchemaAttributeDef = {
+  type: string;
+  required: boolean;
+};
+
+type SchemaIndexFeatureDef = {
+  type: string;
+  source: string;
 };
 
 export class PipelineWriteService {
@@ -144,10 +157,10 @@ export class PipelineWriteService {
     const bundleForApply =
       bundle?.bundleStatus === "error"
         ? {
-            ...bundle,
-            bundleStatus: "applying" as const,
-            applyError: undefined,
-          }
+          ...bundle,
+          bundleStatus: "applying" as const,
+          applyError: undefined,
+        }
         : bundle;
     const outlineSummary = this.toOutlineSummary(envelope.topicId, bundleId, sourceDraftVersion);
     const descHtml = this.toBundleDescHtml(envelope.topicId, bundleId, sourceDraftVersion, bundleForApply);
@@ -271,6 +284,8 @@ export class PipelineWriteService {
           status: "active",
           node_kinds: FieldValue.arrayUnion(...schemaNodeKinds),
           relation_types: FieldValue.arrayUnion("contains"),
+          attribute_defs: this.defaultSchemaAttributeDefs(),
+          index_feature_defs: this.defaultSchemaIndexFeatureDefs(),
           updatedAt: FieldValue.serverTimestamp(),
           createdAt: FieldValue.serverTimestamp(),
         },
@@ -460,16 +475,80 @@ export class PipelineWriteService {
       return { topicId: envelope.topicId, nodeId, skipped: true };
     }
 
+    // Gather child nodes for context
+    const childNodes = await this.nodeRepository.listByParent(
+      envelope.workspaceId,
+      envelope.topicId,
+      nodeId,
+    );
+    const currentTitle = existing.get("title") ?? nodeId;
+    const currentKind = existing.get("kind") ?? "topic";
+
+    // Try LLM rollup
+    let rollupHtml: string;
+    let contextSummary: string;
+    try {
+      const childSummaries = childNodes
+        .map((c) => `- ${c.title}: ${c.contextSummary ?? "(no summary)"}`.slice(0, 200))
+        .join("\n");
+
+      const prompt = `You are a knowledge summarizer. Generate a concise HTML summary for the following knowledge graph node and its children.
+
+Node: "${currentTitle}" (kind: ${currentKind})
+
+Child nodes:
+${childSummaries || "(no child nodes)"}
+
+Return a JSON object:
+{
+  "html": "<section>...</section> — a brief HTML summary with h1, p, and ul elements",
+  "contextSummary": "a 1-2 sentence plain text summary suitable for embedding in prompts"
+}
+Return ONLY the JSON object, no other text.`;
+
+      const { parsed } = await callGemini<{ html: string; contextSummary: string }>(
+        prompt,
+        (value) => {
+          const obj = value as Record<string, unknown>;
+          return {
+            html: typeof obj.html === "string" ? obj.html : `<section><h1>${currentTitle}</h1></section>`,
+            contextSummary:
+              typeof obj.contextSummary === "string"
+                ? obj.contextSummary
+                : `Summary for ${currentTitle}`,
+          };
+        },
+      );
+      rollupHtml = parsed.html;
+      contextSummary = parsed.contextSummary;
+    } catch (error) {
+      if (error instanceof MockGeminiError) {
+        logger.info({ nodeId }, "A7: mock mode, using template rollup");
+      } else {
+        logger.warn({ nodeId, error }, "A7: Gemini failed, using template rollup");
+      }
+      rollupHtml = `<section><h1>${this.escapeHtml(String(currentTitle))}</h1><p>Rollup generation ${generation}</p></section>`;
+      contextSummary = `Rollup generated for ${nodeId} at generation ${generation}`;
+    }
+
+    // Write rollup HTML to GCS
+    const rollupRef = `mind/node_rollup/${nodeId}/v${generation}.html`;
+    try {
+      await writeHtml(rollupRef, rollupHtml);
+    } catch (error) {
+      logger.warn({ error, nodeId }, "failed to write rollup to GCS, continuing");
+    }
+
     await this.nodeRepository.upsert({
       workspaceId: envelope.workspaceId,
       topicId: envelope.topicId,
       nodeId,
-      kind: "topic",
-      title: nodeId,
-      rollupRef: `mind/node_rollup/${nodeId}/v${generation}.html`,
+      kind: String(currentKind),
+      title: String(currentTitle),
+      rollupRef,
       rollupWatermark: generation,
-      contextSummary: `Rollup generated for ${nodeId} at generation ${generation}`,
-      detailHtml: `<section><h1>${nodeId}</h1><p>Rollup generation ${generation}</p></section>`,
+      contextSummary,
+      detailHtml: rollupHtml,
     });
 
     return { topicId: envelope.topicId, nodeId, skipped: false };
@@ -512,6 +591,8 @@ export class PipelineWriteService {
           status: "active",
           node_kinds: FieldValue.arrayUnion("topic", "claim"),
           relation_types: FieldValue.arrayUnion("contains"),
+          attribute_defs: this.defaultSchemaAttributeDefs(),
+          index_feature_defs: this.defaultSchemaIndexFeatureDefs(),
           updatedAt: FieldValue.serverTimestamp(),
           createdAt: FieldValue.serverTimestamp(),
         },
@@ -588,6 +669,30 @@ export class PipelineWriteService {
 
   private toEdgeId(sourceNodeId: string, targetNodeId: string) {
     return `edge:${sourceNodeId}->${targetNodeId}`;
+  }
+
+  private async deriveClusterTitleLLM(atoms: Array<{ title: string; claim: string }>): Promise<string[]> {
+    if (atoms.length === 0) return [];
+
+    const atomList = atoms
+      .slice(0, 20)
+      .map((a, i) => `[${i}] "${a.title}": ${a.claim.slice(0, 100)}`)
+      .join("\n");
+
+    const prompt = `You are a knowledge organization agent. Group the following claims into 3-7 thematic clusters and return a JSON array of cluster title strings.
+
+Claims:
+${atomList}
+
+Return ONLY a JSON array of cluster title strings (3-7 items), e.g. ["Security & Access", "Performance", "Data Model"].
+Use concise, professional titles.`;
+
+    const { parsed } = await callGemini<string[]>(prompt, (value) => {
+      if (!Array.isArray(value)) throw new Error("Expected array");
+      return value.filter((v): v is string => typeof v === "string").slice(0, 7);
+    });
+
+    return parsed;
   }
 
   private deriveClusterTitle(title: string, claim: string) {
@@ -787,6 +892,27 @@ export class PipelineWriteService {
     return placements;
   }
 
+  private defaultSchemaAttributeDefs(): Record<string, SchemaAttributeDef> {
+    return {
+      title: { type: "string", required: true },
+      kind: { type: "string", required: true },
+      parent_id: { type: "string|null", required: false },
+      context_summary: { type: "string", required: false },
+      schema_version: { type: "number", required: true },
+    };
+  }
+
+  private defaultSchemaIndexFeatureDefs(): Record<string, SchemaIndexFeatureDef> {
+    return {
+      relation_importance: { type: "number", source: "indexItems.relationImportance" },
+      recency: { type: "number", source: "indexItems.recency" },
+      confidence: { type: "number", source: "indexItems.confidence" },
+      evidence_count: { type: "number", source: "indexItems.evidenceCount" },
+      edge_count: { type: "number", source: "indexItems.edgeCount" },
+      depth: { type: "number", source: "indexItems.depth" },
+    };
+  }
+
   private toBundleDescHtml(
     topicId: string,
     bundleId: string,
@@ -827,9 +953,9 @@ export class PipelineWriteService {
       `      <li>Bundle status: ${bundleStatus}</li>`,
       ...(escapedApplyErrorCode
         ? [
-            `      <li>Apply error code: ${escapedApplyErrorCode}</li>`,
-            `      <li>Apply error message: ${escapedApplyErrorMessage ?? ""}</li>`,
-          ]
+          `      <li>Apply error code: ${escapedApplyErrorCode}</li>`,
+          `      <li>Apply error message: ${escapedApplyErrorMessage ?? ""}</li>`,
+        ]
         : []),
       "    </ul>",
       "  </body>",
