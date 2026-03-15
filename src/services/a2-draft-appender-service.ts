@@ -80,7 +80,9 @@ export class A2DraftAppenderService {
       logger.warn({ error, resolvedTopicId, draftVersion }, "failed to write draft to GCS, continuing");
     }
 
-    await this.inputProgressRepository.advance({
+    const sourceTopicId = `topic:${inputId}`;
+
+    await this.inputProgressRepository.advanceMany({
       workspaceId: envelope.workspaceId,
       topicId: envelope.topicId,
       inputId,
@@ -90,7 +92,7 @@ export class A2DraftAppenderService {
       traceId: envelope.traceId,
       resolvedTopicId,
       resolutionMode,
-    });
+    }, [envelope.topicId, sourceTopicId, resolvedTopicId]);
 
     return { draftVersion };
   }

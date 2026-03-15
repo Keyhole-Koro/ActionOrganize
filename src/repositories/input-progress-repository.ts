@@ -76,4 +76,16 @@ export class InputProgressRepository {
       );
     });
   }
+
+  async advanceMany(record: InputProgressRecord, topicIds: string[]) {
+    const uniqueTopicIds = [...new Set(topicIds.filter((topicId) => topicId.length > 0))];
+    await Promise.all(
+      uniqueTopicIds.map((topicId) =>
+        this.advance({
+          ...record,
+          topicId,
+        }),
+      ),
+    );
+  }
 }

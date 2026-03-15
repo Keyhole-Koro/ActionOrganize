@@ -218,7 +218,9 @@ export class A0A1WriteService {
       return;
     }
 
-    await this.inputProgressRepository.advance({
+    const sourceTopicId = `topic:${inputId}`;
+
+    await this.inputProgressRepository.advanceMany({
       workspaceId: envelope.workspaceId,
       topicId: envelope.topicId,
       inputId,
@@ -228,7 +230,7 @@ export class A0A1WriteService {
       traceId: envelope.traceId,
       resolvedTopicId,
       resolutionMode,
-    });
+    }, [envelope.topicId, sourceTopicId]);
   }
 
   // ── Gemini normalization ────────────────────────────────────────────────

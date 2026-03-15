@@ -43,6 +43,11 @@ describe("A5BalancerService", () => {
       topicId: "topic-77",
       nodeIds: ["node-a", "node-b"],
       generation: 8,
+      metrics: {
+        imbalance: 0,
+        unresolvedRate: 0,
+        redundancy: 0,
+      },
     });
 
     expect(upsert).toHaveBeenCalledWith(

@@ -405,7 +405,8 @@ export class PipelineWriteService {
     await this.bundleRepository.markApplied(envelope.workspaceId, envelope.topicId, bundleId);
 
     if (inputId) {
-      await this.inputProgressRepository.advance({
+      const sourceTopicId = `topic:${inputId}`;
+      await this.inputProgressRepository.advanceMany({
         workspaceId: envelope.workspaceId,
         topicId: envelope.topicId,
         inputId,
@@ -413,8 +414,9 @@ export class PipelineWriteService {
         currentPhase: "A3_CLEANER",
         lastEventType: "outline.updated",
         traceId: envelope.traceId,
+        resolvedTopicId: envelope.topicId,
         completedAt: true,
-      });
+      }, [envelope.topicId, sourceTopicId]);
     }
 
     return { outlineVersion, changedNodeIds, descRef, reissuedAtomIds };
