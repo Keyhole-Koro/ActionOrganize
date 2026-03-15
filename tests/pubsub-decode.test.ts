@@ -43,7 +43,6 @@ describe("decodePushEvent", () => {
           payload: {
             workspaceId: "ws-1",
             inputId: "in-legacy-1",
-            topicId: "topic-legacy-1",
           },
         }),
         attributes: {
@@ -58,14 +57,14 @@ describe("decodePushEvent", () => {
       schemaVersion: "1",
       type: "input.received",
       workspaceId: "ws-1",
-      topicId: "topic-legacy-1",
+      topicId: "topic:in-legacy-1",
       traceId: "legacy:msg-1",
     });
     expect(decoded.attributes).toMatchObject({
       type: "input.received",
       schemaVersion: "1",
       workspaceId: "ws-1",
-      topicId: "topic-legacy-1",
+      topicId: "topic:in-legacy-1",
       inputId: "in-legacy-1",
     });
   });

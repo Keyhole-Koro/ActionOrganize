@@ -23,7 +23,12 @@ function deriveTopicId(type: string, payload: Record<string, unknown>): string {
     return explicitTopicId;
   }
 
-  throw new InvalidEventError(`legacy ${type} event must include payload.topicId`);
+  const inputId = asNonEmptyString(payload.inputId);
+  if (inputId) {
+    return `topic:${inputId}`;
+  }
+
+  throw new InvalidEventError(`legacy ${type} event must include payload.topicId or payload.inputId`);
 }
 
 function parseLegacyEvent(parsedEnvelope: unknown): LegacyEvent | null {
