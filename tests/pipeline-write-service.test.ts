@@ -133,7 +133,7 @@ describe("PipelineWriteService.onBundleCreated", () => {
 });
 
 describe("PipelineWriteService hierarchy planning", () => {
-  it("groups claims into deterministic cluster and subcluster nodes", () => {
+  it("groups claims into deterministic cluster nodes with normalizer collapse", () => {
     const service = new PipelineWriteService() as unknown as {
       deriveClusterTitle: (title: string, claim: string) => string;
       deriveSubclusterTitle: (clusterTitle: string, title: string, claim: string) => string;
@@ -148,9 +148,11 @@ describe("PipelineWriteService hierarchy planning", () => {
         subclusterNodeId: string;
         subclusterTitle: string;
       }>) => {
+        rootClaims: Array<{ nodeId: string; title: string }>;
         clusters: Array<{
           clusterNodeId: string;
           clusterTitle: string;
+          claims: Array<{ nodeId: string; title: string }>;
           subclusters: Array<{
             subclusterNodeId: string;
             subclusterTitle: string;
@@ -191,21 +193,77 @@ describe("PipelineWriteService hierarchy planning", () => {
         subclusterNodeId,
         subclusterTitle,
       },
+      {
+        nodeId: "node:topic-1:atom:a3",
+        title: "Session invalidation should be strict",
+        clusterNodeId,
+        clusterTitle,
+        subclusterNodeId,
+        subclusterTitle,
+      },
     ]);
 
+    expect(plan.rootClaims).toHaveLength(0);
     expect(plan.clusters).toHaveLength(1);
     expect(plan.clusters[0]).toMatchObject({
       clusterNodeId,
       clusterTitle,
     });
-    expect(plan.clusters[0].subclusters).toHaveLength(1);
-    expect(plan.clusters[0].subclusters[0]).toMatchObject({
-      subclusterNodeId,
-      subclusterTitle,
-    });
-    expect(plan.clusters[0].subclusters[0].claims.map((claim) => claim.nodeId)).toEqual([
+    expect(plan.clusters[0].subclusters).toHaveLength(0);
+    expect(plan.clusters[0].claims.map((claim) => claim.nodeId)).toEqual([
       "node:topic-1:atom:a1",
+      "node:topic-1:atom:a3",
       "node:topic-1:atom:a2",
+    ]);
+  });
+
+  it("collapses small clusters to root level claims", () => {
+    const service = new PipelineWriteService() as unknown as {
+      buildHierarchyPlan: (candidates: Array<{
+        nodeId: string;
+        title: string;
+        clusterNodeId: string;
+        clusterTitle: string;
+        subclusterNodeId: string;
+        subclusterTitle: string;
+      }>) => {
+        rootClaims: Array<{ nodeId: string; title: string }>;
+        clusters: Array<{
+          clusterNodeId: string;
+          clusterTitle: string;
+          claims: Array<{ nodeId: string; title: string }>;
+          subclusters: Array<{
+            subclusterNodeId: string;
+            subclusterTitle: string;
+            claims: Array<{ nodeId: string; title: string }>;
+          }>;
+        }>;
+      };
+    };
+
+    const plan = service.buildHierarchyPlan([
+      {
+        nodeId: "node:topic-1:atom:b1",
+        title: "UI copy is unclear",
+        clusterNodeId: "node:topic-1:cluster:user-experience",
+        clusterTitle: "User Experience",
+        subclusterNodeId: "node:topic-1:subcluster:user-experience:ui-communication",
+        subclusterTitle: "UI Communication",
+      },
+      {
+        nodeId: "node:topic-1:atom:b2",
+        title: "Navigation labels are ambiguous",
+        clusterNodeId: "node:topic-1:cluster:user-experience",
+        clusterTitle: "User Experience",
+        subclusterNodeId: "node:topic-1:subcluster:user-experience:interaction-flow",
+        subclusterTitle: "Interaction Flow",
+      },
+    ]);
+
+    expect(plan.clusters).toHaveLength(0);
+    expect(plan.rootClaims.map((claim) => claim.nodeId)).toEqual([
+      "node:topic-1:atom:b2",
+      "node:topic-1:atom:b1",
     ]);
   });
 });

@@ -25,6 +25,14 @@ export class TopicRepository {
     return this.firestore.doc(this.docPath(workspaceId, topicId));
   }
 
+  schemaDocPath(workspaceId: string, topicId: string, version: number) {
+    return `${this.docPath(workspaceId, topicId)}/schemas/${version}`;
+  }
+
+  schemaDocRef(workspaceId: string, topicId: string, version: number) {
+    return this.firestore.doc(this.schemaDocPath(workspaceId, topicId, version));
+  }
+
   async ensure(record: TopicRecord) {
     await this.docRef(record.workspaceId, record.topicId).set(
       {

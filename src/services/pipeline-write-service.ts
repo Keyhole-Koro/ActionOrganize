@@ -44,10 +44,12 @@ type SubclusterGroup = {
 type ClusterGroup = {
   clusterNodeId: string;
   clusterTitle: string;
+  claims: Array<{ nodeId: string; title: string }>;
   subclusters: SubclusterGroup[];
 };
 
 type HierarchyPlan = {
+  rootClaims: Array<{ nodeId: string; title: string }>;
   clusters: ClusterGroup[];
 };
 
@@ -192,9 +194,15 @@ export class PipelineWriteService {
       } satisfies HierarchyCandidate;
     });
     const hierarchyPlan = this.buildHierarchyPlan(hierarchyCandidates);
-    const hierarchyByClaimNodeId = new Map(
-      hierarchyCandidates.map((candidate) => [candidate.nodeId, candidate]),
-    );
+    const claimPlacementByNodeId = this.buildClaimPlacement(rootNodeId, hierarchyPlan);
+    const schemaNodeKinds = dedupeNodeIds([
+      "topic",
+      "claim",
+      ...(hierarchyPlan.clusters.length > 0 ? ["cluster"] : []),
+      ...(hierarchyPlan.clusters.some((cluster) => cluster.subclusters.length > 0)
+        ? ["subcluster"]
+        : []),
+    ]);
     const outlineMap = this.toOutlineMap(envelope.topicId, rootNodeId, hierarchyPlan);
     const changedNodeIds = dedupeNodeIds([
       rootNodeId,
@@ -244,6 +252,25 @@ export class PipelineWriteService {
           topicId: envelope.topicId,
           latestOutlineVersion: nextOutlineVersion,
           latestOutlineRef: outlineRef,
+          updatedAt: FieldValue.serverTimestamp(),
+          createdAt: FieldValue.serverTimestamp(),
+        },
+        { merge: true },
+      );
+
+      const schemaRef = this.topicRepository.schemaDocRef(
+        envelope.workspaceId,
+        envelope.topicId,
+        schemaVersion,
+      );
+      tx.set(
+        schemaRef,
+        {
+          topicId: envelope.topicId,
+          version: schemaVersion,
+          status: "active",
+          node_kinds: FieldValue.arrayUnion(...schemaNodeKinds),
+          relation_types: FieldValue.arrayUnion("contains"),
           updatedAt: FieldValue.serverTimestamp(),
           createdAt: FieldValue.serverTimestamp(),
         },
@@ -306,8 +333,7 @@ export class PipelineWriteService {
       }
 
       for (const candidate of resolvedCandidates) {
-        const placement = hierarchyByClaimNodeId.get(candidate.nodeId);
-        const parentId = placement?.subclusterNodeId ?? rootNodeId;
+        const parentId = claimPlacementByNodeId.get(candidate.nodeId) ?? rootNodeId;
         const atomNodeId = candidate.nodeId;
         this.nodeRepository.write(tx, {
           workspaceId: envelope.workspaceId,
@@ -463,11 +489,31 @@ export class PipelineWriteService {
         return;
       }
 
+      const schemaRef = this.topicRepository.schemaDocRef(
+        envelope.workspaceId,
+        envelope.topicId,
+        schemaVersion,
+      );
+
       tx.set(
         topicRef,
         {
           schemaVersion,
           updatedAt: FieldValue.serverTimestamp(),
+        },
+        { merge: true },
+      );
+
+      tx.set(
+        schemaRef,
+        {
+          topicId: envelope.topicId,
+          version: schemaVersion,
+          status: "active",
+          node_kinds: FieldValue.arrayUnion("topic", "claim"),
+          relation_types: FieldValue.arrayUnion("contains"),
+          updatedAt: FieldValue.serverTimestamp(),
+          createdAt: FieldValue.serverTimestamp(),
         },
         { merge: true },
       );
@@ -486,8 +532,15 @@ export class PipelineWriteService {
   private toOutlineMap(topicId: string, rootNodeId: string, hierarchyPlan: HierarchyPlan) {
     const lines = [`# Map ${topicId}`, "", `- ${rootNodeId}`];
 
+    for (const claim of hierarchyPlan.rootClaims) {
+      lines.push(`  - ${claim.title} (${claim.nodeId})`);
+    }
+
     for (const cluster of hierarchyPlan.clusters) {
       lines.push(`  - ${cluster.clusterTitle} (${cluster.clusterNodeId})`);
+      for (const claim of cluster.claims) {
+        lines.push(`    - ${claim.title} (${claim.nodeId})`);
+      }
       for (const subcluster of cluster.subclusters) {
         lines.push(`    - ${subcluster.subclusterTitle} (${subcluster.subclusterNodeId})`);
         for (const claim of subcluster.claims) {
@@ -617,6 +670,8 @@ export class PipelineWriteService {
   }
 
   private buildHierarchyPlan(candidates: HierarchyCandidate[]): HierarchyPlan {
+    const MIN_CLAIMS_FOR_CLUSTER = 3;
+    const MIN_CLAIMS_FOR_SUBCLUSTER = 2;
     const clusterMap = new Map<
       string,
       {
@@ -657,21 +712,79 @@ export class PipelineWriteService {
       });
     }
 
+    const rootClaims: Array<{ nodeId: string; title: string }> = [];
+
     const clusters = [...clusterMap.values()]
-      .map((cluster) => ({
-        clusterNodeId: cluster.clusterNodeId,
-        clusterTitle: cluster.clusterTitle,
-        subclusters: [...cluster.subclusterMap.values()]
+      .map((cluster) => {
+        const sortedSubclusters = [...cluster.subclusterMap.values()]
           .map((subcluster) => ({
             subclusterNodeId: subcluster.subclusterNodeId,
             subclusterTitle: subcluster.subclusterTitle,
             claims: subcluster.claims.sort((a, b) => a.title.localeCompare(b.title)),
           }))
-          .sort((a, b) => a.subclusterTitle.localeCompare(b.subclusterTitle)),
-      }))
+          .sort((a, b) => a.subclusterTitle.localeCompare(b.subclusterTitle));
+
+        const totalClaims = sortedSubclusters.reduce(
+          (count, subcluster) => count + subcluster.claims.length,
+          0,
+        );
+
+        if (totalClaims < MIN_CLAIMS_FOR_CLUSTER) {
+          rootClaims.push(...sortedSubclusters.flatMap((subcluster) => subcluster.claims));
+          return null;
+        }
+
+        const directClaims: Array<{ nodeId: string; title: string }> = [];
+        const keptSubclusters: SubclusterGroup[] = [];
+
+        for (const subcluster of sortedSubclusters) {
+          if (subcluster.claims.length < MIN_CLAIMS_FOR_SUBCLUSTER) {
+            directClaims.push(...subcluster.claims);
+            continue;
+          }
+          keptSubclusters.push(subcluster);
+        }
+
+        if (keptSubclusters.length === 1 && directClaims.length === 0) {
+          directClaims.push(...keptSubclusters[0].claims);
+          keptSubclusters.length = 0;
+        }
+
+        return {
+          clusterNodeId: cluster.clusterNodeId,
+          clusterTitle: cluster.clusterTitle,
+          claims: directClaims.sort((a, b) => a.title.localeCompare(b.title)),
+          subclusters: keptSubclusters,
+        };
+      })
+      .filter((cluster): cluster is ClusterGroup => cluster !== null)
       .sort((a, b) => a.clusterTitle.localeCompare(b.clusterTitle));
 
-    return { clusters };
+    rootClaims.sort((a, b) => a.title.localeCompare(b.title));
+
+    return { rootClaims, clusters };
+  }
+
+  private buildClaimPlacement(rootNodeId: string, hierarchyPlan: HierarchyPlan) {
+    const placements = new Map<string, string>();
+
+    for (const claim of hierarchyPlan.rootClaims) {
+      placements.set(claim.nodeId, rootNodeId);
+    }
+
+    for (const cluster of hierarchyPlan.clusters) {
+      for (const claim of cluster.claims) {
+        placements.set(claim.nodeId, cluster.clusterNodeId);
+      }
+
+      for (const subcluster of cluster.subclusters) {
+        for (const claim of subcluster.claims) {
+          placements.set(claim.nodeId, subcluster.subclusterNodeId);
+        }
+      }
+    }
+
+    return placements;
   }
 
   private toBundleDescHtml(
