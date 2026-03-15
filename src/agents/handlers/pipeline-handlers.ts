@@ -187,17 +187,17 @@ class DraftUpdatedHandler implements AgentHandler {
     const schemaEvents =
       typeof proposedSchemaVersion === "number" && proposedSchemaVersion > schemaVersion
         ? [
-            {
-              type: "topic.schema_updated",
+          {
+            type: "topic.schema_updated",
+            topicId: envelope.topicId,
+            orderingKey: envelope.topicId,
+            idempotencyKey: `type:topic.schema_updated/topicId:${envelope.topicId}/schemaVersion:${proposedSchemaVersion}`,
+            payload: {
               topicId: envelope.topicId,
-              orderingKey: envelope.topicId,
-              idempotencyKey: `type:topic.schema_updated/topicId:${envelope.topicId}/schemaVersion:${proposedSchemaVersion}`,
-              payload: {
-                topicId: envelope.topicId,
-                schemaVersion: proposedSchemaVersion,
-              },
+              schemaVersion: proposedSchemaVersion,
             },
-          ]
+          },
+        ]
         : [];
 
     return {
@@ -295,8 +295,29 @@ class BundleDescribedHandler implements AgentHandler {
 class AtomReissuedHandler implements AgentHandler {
   readonly eventType = "atom.reissued";
 
-  async handle(): Promise<AgentResult> {
-    return { ack: true, emittedEvents: [] };
+  async handle({ envelope }: AgentContext): Promise<AgentResult> {
+    const atomId = optionalString(envelope.payload, "atomId") ?? "unknown";
+    const reason = optionalString(envelope.payload, "reason") ?? "reissued";
+
+    // Re-emit as input.received to re-process through A1 → TopicResolver
+    return {
+      ack: true,
+      emittedEvents: [
+        {
+          type: "input.received",
+          topicId: envelope.topicId,
+          idempotencyKey: `type:atom.reissued/topicId:${envelope.topicId}/atomId:${atomId}/reason:${reason}`,
+          payload: {
+            topicId: envelope.topicId,
+            inputId: `reissue:${atomId}`,
+            text: typeof envelope.payload.claim === "string" ? envelope.payload.claim : "",
+            contentType: "text/plain",
+            reissueSource: atomId,
+            reissueReason: reason,
+          },
+        },
+      ],
+    };
   }
 }
 

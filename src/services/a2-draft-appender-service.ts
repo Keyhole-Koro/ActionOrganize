@@ -4,6 +4,8 @@ import { DraftRepository } from "../repositories/draft-repository.js";
 import { InputProgressRepository } from "../repositories/input-progress-repository.js";
 import { TopicRepository } from "../repositories/topic-repository.js";
 import type { EventEnvelope } from "../models/envelope.js";
+import { writeMarkdown } from "../lib/gcs-writer.js";
+import { logger } from "../lib/logger.js";
 
 export type DraftAppendResult = {
   draftVersion: number;
@@ -45,12 +47,14 @@ export class A2DraftAppenderService {
         resolvedTopicId,
       );
 
+      const draftMd = this.toDraftMarkdown(resolvedTopicId, inputId, atomIds);
+
       this.draftRepository.write(tx, {
         workspaceId: envelope.workspaceId,
         topicId: resolvedTopicId,
         version: nextVersion,
         sourceAtomIds: atomIds,
-        summaryMd: this.toDraftMarkdown(resolvedTopicId, inputId, atomIds),
+        summaryMd: draftMd,
       });
 
       tx.set(
@@ -67,6 +71,14 @@ export class A2DraftAppenderService {
 
       return nextVersion;
     });
+
+    // Write draft to GCS
+    try {
+      const draftMd = this.toDraftMarkdown(resolvedTopicId, inputId, atomIds);
+      await writeMarkdown(`mind/drafts/${resolvedTopicId}/v${draftVersion}.md`, draftMd);
+    } catch (error) {
+      logger.warn({ error, resolvedTopicId, draftVersion }, "failed to write draft to GCS, continuing");
+    }
 
     await this.inputProgressRepository.advance({
       workspaceId: envelope.workspaceId,

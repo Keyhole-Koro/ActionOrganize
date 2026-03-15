@@ -67,13 +67,15 @@ export class TopicRepository {
       .limit(Math.max(limit * 3, limit))
       .get();
 
+    const ALLOWED_STATES = new Set(["active", "split_child"]);
+
     return snapshot.docs
       .map((doc) => ({
         topicId: doc.id,
         title: typeof doc.get("title") === "string" ? doc.get("title") : doc.id,
         status: typeof doc.get("status") === "string" ? doc.get("status") : "active",
       }))
-      .filter((topic) => topic.status === "active" || topic.status === "split_child")
+      .filter((topic) => ALLOWED_STATES.has(topic.status))
       .slice(0, limit);
   }
 

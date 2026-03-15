@@ -12,7 +12,8 @@ import { TopicRepository } from "../repositories/topic-repository.js";
 import { BundleDescriptionRepository } from "../repositories/bundle-description-repository.js";
 import { EdgeRepository } from "../repositories/edge-repository.js";
 import { AtomRepository } from "../repositories/atom-repository.js";
-import { dedupeNodeIds, resolveNode } from "./cleaner-entity-resolution.js";
+import { dedupeNodeIds, resolveNodeAsync } from "./cleaner-entity-resolution.js";
+import { EvidenceRepository } from "../repositories/evidence-repository.js";
 import { callGemini, MockGeminiError } from "../lib/gemini-client.js";
 import { writeHtml } from "../lib/gcs-writer.js";
 import { logger } from "../lib/logger.js";
@@ -76,6 +77,7 @@ export class PipelineWriteService {
   private readonly bundleDescriptionRepository = new BundleDescriptionRepository();
   private readonly edgeRepository = new EdgeRepository();
   private readonly atomRepository = new AtomRepository();
+  private readonly evidenceRepository = new EvidenceRepository();
 
   private isFirestoreBackend() {
     return env.STATE_BACKEND === "firestore";
@@ -176,21 +178,23 @@ export class PipelineWriteService {
       envelope.workspaceId,
       envelope.topicId,
     );
-    const resolvedCandidates = candidateAtoms.map((atom) => {
-      const fallbackNodeId = this.toAtomNodeId(envelope.topicId, atom.atomId);
-      const resolved = resolveNode(existingClaimNodes, {
-        atomTitle: atom.title,
-        atomClaim: atom.claim,
-        fallbackNodeId,
-        schemaVersion: bundleForApply?.schemaVersion,
-      });
-      return {
-        atom,
-        nodeId: resolved.nodeId,
-        isMerged: resolved.isMerged,
-        similarity: resolved.similarity,
-      };
-    });
+    const resolvedCandidates = await Promise.all(
+      candidateAtoms.map(async (atom) => {
+        const fallbackNodeId = this.toAtomNodeId(envelope.topicId, atom.atomId);
+        const resolved = await resolveNodeAsync(existingClaimNodes, {
+          atomTitle: atom.title,
+          atomClaim: atom.claim,
+          fallbackNodeId,
+          schemaVersion: bundleForApply?.schemaVersion,
+        });
+        return {
+          atom,
+          nodeId: resolved.nodeId,
+          isMerged: resolved.isMerged,
+          similarity: resolved.similarity,
+        };
+      }),
+    );
     const hierarchyCandidates = resolvedCandidates.map((item) => {
       const clusterTitle = this.deriveClusterTitle(item.atom.title, item.atom.claim);
       const subclusterTitle = this.deriveSubclusterTitle(clusterTitle, item.atom.title, item.atom.claim);
@@ -376,6 +380,28 @@ export class PipelineWriteService {
       return nextOutlineVersion;
     });
 
+    // Write evidence documents for each accepted atom
+    try {
+      await Promise.all(
+        resolvedCandidates.map((candidate) =>
+          this.evidenceRepository.upsert({
+            workspaceId: envelope.workspaceId,
+            topicId: envelope.topicId,
+            nodeId: candidate.nodeId,
+            evidenceId: `ev:${candidate.atom.atomId}`,
+            sourceAtomId: candidate.atom.atomId,
+            sourceInputId: candidate.atom.sourceInputId,
+            claim: candidate.atom.claim,
+            kind: candidate.atom.kind,
+            confidence: candidate.atom.confidence,
+            schemaVersion: bundleForApply?.schemaVersion,
+          }),
+        ),
+      );
+    } catch (error) {
+      logger.warn({ error, bundleId }, "failed to write evidence docs, continuing");
+    }
+
     await this.bundleRepository.markApplied(envelope.workspaceId, envelope.topicId, bundleId);
 
     if (inputId) {
@@ -397,6 +423,58 @@ export class PipelineWriteService {
   async onBundleDescribed(envelope: EventEnvelope, bundleId: string, descRef: string) {
     if (!this.isFirestoreBackend()) {
       return;
+    }
+
+    // Try LLM-generated description
+    try {
+      const bundle = await this.bundleRepository.get(
+        envelope.workspaceId,
+        envelope.topicId,
+        bundleId,
+      );
+      const atomIds = bundle?.sourceAtomIds ?? [];
+      const atoms = atomIds.length
+        ? await this.atomRepository.getByIds(envelope.workspaceId, envelope.topicId, atomIds)
+        : [];
+      const atomSummaries = atoms
+        .slice(0, 10)
+        .map((a) => `- ${a.title}: ${a.claim.slice(0, 120)}`)
+        .join("\n");
+
+      const prompt = `You are a knowledge pipeline documentation agent. Generate a concise HTML description for a bundle of newly processed knowledge claims.
+
+Bundle ID: ${bundleId}
+Topic: ${envelope.topicId}
+Draft version: ${bundle?.sourceDraftVersion ?? "unknown"}
+Atom count: ${atoms.length}
+
+Claims:
+${atomSummaries || "(none)"}
+
+Return a JSON object:
+{
+  "html": "<!doctype html><html>...</html> — a well-formatted HTML document describing this bundle"
+}
+Return ONLY the JSON object.`;
+
+      const { parsed } = await callGemini<{ html: string }>(prompt, (value) => {
+        const obj = value as Record<string, unknown>;
+        return { html: typeof obj.html === "string" ? obj.html : "" };
+      });
+
+      if (parsed.html.length > 0) {
+        try {
+          await writeHtml(descRef, parsed.html);
+        } catch (writeError) {
+          logger.warn({ writeError, bundleId }, "failed to write LLM bundle desc to GCS");
+        }
+      }
+    } catch (error) {
+      if (error instanceof MockGeminiError) {
+        logger.info({ bundleId }, "A6: mock mode, skipping LLM bundle description");
+      } else {
+        logger.warn({ error, bundleId }, "A6: LLM description failed, keeping template desc");
+      }
     }
 
     await this.bundleRepository.markDescribed(
@@ -421,23 +499,85 @@ export class PipelineWriteService {
     const schemaVersion =
       typeof topicSnapshot.get("schemaVersion") === "number" ? topicSnapshot.get("schemaVersion") : 1;
 
+    // Compute real index features per node
     await Promise.all(
-      changedNodeIds.map((nodeId, index) =>
-        this.indexItemRepository.upsert({
+      changedNodeIds.map(async (nodeId) => {
+        // Get real evidence count
+        let evidenceCount = 0;
+        try {
+          evidenceCount = await this.evidenceRepository.countByNode(
+            envelope.workspaceId,
+            envelope.topicId,
+            nodeId,
+          );
+        } catch {
+          // fallback to 0
+        }
+
+        // Get real child count for relation importance
+        let childCount = 0;
+        try {
+          const children = await this.nodeRepository.listByParent(
+            envelope.workspaceId,
+            envelope.topicId,
+            nodeId,
+            1000,
+          );
+          childCount = children.length;
+        } catch {
+          // fallback to 0
+        }
+
+        // Get node depth by traversing parentId
+        let depth = 0;
+        try {
+          let currentId = nodeId;
+          const visited = new Set<string>();
+          while (depth < 10) {
+            visited.add(currentId);
+            const nodeDoc = await this.nodeRepository.docRef(
+              envelope.workspaceId,
+              envelope.topicId,
+              currentId,
+            ).get();
+            const parentId = nodeDoc.get("parentId");
+            if (typeof parentId !== "string" || parentId.length === 0 || visited.has(parentId)) break;
+            depth++;
+            currentId = parentId;
+          }
+        } catch {
+          // fallback to 0
+        }
+
+        // Compute edge count
+        const edgeCount = childCount;
+
+        // Importance based on evidence and children
+        const relationImportance = Math.min(
+          1.0,
+          0.3 + evidenceCount * 0.1 + childCount * 0.05,
+        );
+
+        // Confidence based on evidence
+        const confidence = evidenceCount > 0
+          ? Math.min(0.95, 0.5 + evidenceCount * 0.1)
+          : 0.5;
+
+        return this.indexItemRepository.upsert({
           workspaceId: envelope.workspaceId,
           topicId: envelope.topicId,
           indexItemId: `index:${nodeId}:v${outlineVersion}`,
           nodeId,
           schemaVersion,
           outlineVersion,
-          relationImportance: 1 - index * 0.1,
+          relationImportance,
           recency: outlineVersion,
-          confidence: 0.8,
-          evidenceCount: 1,
-          edgeCount: 0,
-          depth: index,
-        }),
-      ),
+          confidence,
+          evidenceCount,
+          edgeCount,
+          depth,
+        });
+      }),
     );
 
     const mapRef = this.toMapRef(envelope.topicId, outlineVersion);
