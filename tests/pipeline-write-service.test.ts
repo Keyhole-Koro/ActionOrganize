@@ -131,3 +131,81 @@ describe("PipelineWriteService.onBundleCreated", () => {
     });
   });
 });
+
+describe("PipelineWriteService hierarchy planning", () => {
+  it("groups claims into deterministic cluster and subcluster nodes", () => {
+    const service = new PipelineWriteService() as unknown as {
+      deriveClusterTitle: (title: string, claim: string) => string;
+      deriveSubclusterTitle: (clusterTitle: string, title: string, claim: string) => string;
+      toStableSlug: (value: string) => string;
+      toClusterNodeId: (topicId: string, clusterSlug: string) => string;
+      toSubclusterNodeId: (topicId: string, clusterSlug: string, subclusterSlug: string) => string;
+      buildHierarchyPlan: (candidates: Array<{
+        nodeId: string;
+        title: string;
+        clusterNodeId: string;
+        clusterTitle: string;
+        subclusterNodeId: string;
+        subclusterTitle: string;
+      }>) => {
+        clusters: Array<{
+          clusterNodeId: string;
+          clusterTitle: string;
+          subclusters: Array<{
+            subclusterNodeId: string;
+            subclusterTitle: string;
+            claims: Array<{ nodeId: string; title: string }>;
+          }>;
+        }>;
+      };
+    };
+
+    const clusterTitle = service.deriveClusterTitle(
+      "Refresh token rotation is missing",
+      "Token lifecycle policy is incomplete",
+    );
+    const subclusterTitle = service.deriveSubclusterTitle(
+      clusterTitle,
+      "Refresh token rotation is missing",
+      "Token lifecycle policy is incomplete",
+    );
+    const clusterSlug = service.toStableSlug(clusterTitle);
+    const subclusterSlug = service.toStableSlug(subclusterTitle);
+    const clusterNodeId = service.toClusterNodeId("topic-1", clusterSlug);
+    const subclusterNodeId = service.toSubclusterNodeId("topic-1", clusterSlug, subclusterSlug);
+
+    const plan = service.buildHierarchyPlan([
+      {
+        nodeId: "node:topic-1:atom:a1",
+        title: "Refresh token rotation is missing",
+        clusterNodeId,
+        clusterTitle,
+        subclusterNodeId,
+        subclusterTitle,
+      },
+      {
+        nodeId: "node:topic-1:atom:a2",
+        title: "Token TTL is not enforced",
+        clusterNodeId,
+        clusterTitle,
+        subclusterNodeId,
+        subclusterTitle,
+      },
+    ]);
+
+    expect(plan.clusters).toHaveLength(1);
+    expect(plan.clusters[0]).toMatchObject({
+      clusterNodeId,
+      clusterTitle,
+    });
+    expect(plan.clusters[0].subclusters).toHaveLength(1);
+    expect(plan.clusters[0].subclusters[0]).toMatchObject({
+      subclusterNodeId,
+      subclusterTitle,
+    });
+    expect(plan.clusters[0].subclusters[0].claims.map((claim) => claim.nodeId)).toEqual([
+      "node:topic-1:atom:a1",
+      "node:topic-1:atom:a2",
+    ]);
+  });
+});
