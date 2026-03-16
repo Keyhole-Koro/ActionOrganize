@@ -30,7 +30,7 @@ VERTEX_USE_REAL_API=false \
 npm run dev
 ```
 
-`VERTEX_USE_REAL_API=true` で起動する場合は、`GEMINI_API_KEY` を必須で設定してください。
+`VERTEX_USE_REAL_API=true` で起動する場合は、`GOOGLE_API_KEY` を必須で設定してください。
 必要に応じて `GEMINI_MODEL` を設定してください（既定値: `gemini-3-flash`）。
 
 例（Gemini 実 API）:
@@ -47,15 +47,15 @@ STORAGE_EMULATOR_HOST=http://localhost:4443 \
 ORGANIZE_GCS_BUCKET=organize-local \
 LEASE_TTL_SECONDS=120 \
 VERTEX_USE_REAL_API=true \
-GEMINI_API_KEY=your-api-key \
+GOOGLE_API_KEY=your-api-key \
 GEMINI_MODEL=gemini-3-flash \
 npm run dev
 ```
 
-Docker Compose では root の `compose.override.yaml` により `organize` を実 API モードで起動できます。
+Docker Compose で実 API を使う場合は、`GOOGLE_API_KEY` を渡して起動してください。
 
 ```bash
-export GEMINI_API_KEY=your-api-key
+export GOOGLE_API_KEY=your-api-key
 docker compose --profile full up organize
 ```
 
@@ -108,7 +108,7 @@ Required:
   * positive integer
 * `VERTEX_USE_REAL_API`
   * `true` or `false`
-* `GEMINI_API_KEY` (when `VERTEX_USE_REAL_API=true`)
+* `GOOGLE_API_KEY` (when `VERTEX_USE_REAL_API=true`)
 * `GEMINI_MODEL`
   * default: `gemini-3-flash` (e.g. `gemini-3-pro`)
 

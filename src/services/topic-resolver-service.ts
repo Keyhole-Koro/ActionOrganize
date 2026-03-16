@@ -195,7 +195,7 @@ export class TopicResolverService {
     const timeout = setTimeout(() => controller.abort(), GEMINI_TIMEOUT_MS);
 
     const response = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/${env.GEMINI_MODEL}:generateContent?key=${env.GEMINI_API_KEY}`,
+      `https://generativelanguage.googleapis.com/v1beta/models/${env.GEMINI_MODEL}:generateContent?key=${env.GOOGLE_API_KEY}`,
 
       {
         method: "POST",

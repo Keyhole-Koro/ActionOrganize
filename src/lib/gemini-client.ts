@@ -35,7 +35,7 @@ export async function callGemini<T = unknown>(
         jsonMode = true,
     } = options;
 
-    if (!env.VERTEX_USE_REAL_API || !env.GEMINI_API_KEY) {
+    if (!env.VERTEX_USE_REAL_API || !env.GOOGLE_API_KEY) {
         logger.info("gemini-client: mock mode, returning empty response");
         // Return a mock — the caller's validate function decides the shape
         throw new MockGeminiError();
@@ -44,7 +44,7 @@ export async function callGemini<T = unknown>(
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), timeoutMs);
 
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/${env.GEMINI_MODEL}:generateContent?key=${env.GEMINI_API_KEY}`;
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${env.GEMINI_MODEL}:generateContent?key=${env.GOOGLE_API_KEY}`;
 
     const response = await fetch(url, {
         method: "POST",

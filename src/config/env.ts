@@ -34,15 +34,15 @@ const envSchema = z
     ORGANIZE_GCS_BUCKET: requiredString("ORGANIZE_GCS_BUCKET"),
     LEASE_TTL_SECONDS: requiredPositiveInt("LEASE_TTL_SECONDS"),
     VERTEX_USE_REAL_API: requiredBooleanString("VERTEX_USE_REAL_API"),
-    GEMINI_API_KEY: z.string().trim().min(1).optional(),
+    GOOGLE_API_KEY: z.string().trim().min(1).optional(),
     GEMINI_MODEL: z.string().trim().min(1).default("gemini-3-flash"),
   })
   .superRefine((data, ctx) => {
-    if (data.VERTEX_USE_REAL_API && !data.GEMINI_API_KEY) {
+    if (data.VERTEX_USE_REAL_API && !data.GOOGLE_API_KEY) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
-        message: "GEMINI_API_KEY is required when VERTEX_USE_REAL_API=true",
-        path: ["GEMINI_API_KEY"],
+        message: "GOOGLE_API_KEY is required when VERTEX_USE_REAL_API=true",
+        path: ["GOOGLE_API_KEY"],
       });
     }
   });

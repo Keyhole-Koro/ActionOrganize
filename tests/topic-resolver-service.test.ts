@@ -22,7 +22,7 @@ describe("TopicResolverService", () => {
   afterEach(() => {
     vi.restoreAllMocks();
     env.VERTEX_USE_REAL_API = false;
-    env.GEMINI_API_KEY = undefined;
+    env.GOOGLE_API_KEY = undefined;
   });
 
   it("uses deterministic resolution when real API is disabled", async () => {
@@ -64,7 +64,7 @@ describe("TopicResolverService", () => {
 
   it("uses Gemini decision when real API is enabled", async () => {
     env.VERTEX_USE_REAL_API = true;
-    env.GEMINI_API_KEY = "dummy-key";
+    env.GOOGLE_API_KEY = "dummy-key";
     env.GEMINI_MODEL = "gemini-3-flash";
     const infoSpy = vi.spyOn(logger, "info").mockImplementation(() => logger);
 
@@ -128,7 +128,7 @@ describe("TopicResolverService", () => {
 
   it("throws retryable error when Gemini request fails", async () => {
     env.VERTEX_USE_REAL_API = true;
-    env.GEMINI_API_KEY = "dummy-key";
+    env.GOOGLE_API_KEY = "dummy-key";
 
     const service = new TopicResolverService();
     (
@@ -156,7 +156,7 @@ describe("TopicResolverService", () => {
 
   it("falls back to create_new when Gemini picks a topic outside candidates", async () => {
     env.VERTEX_USE_REAL_API = true;
-    env.GEMINI_API_KEY = "dummy-key";
+    env.GOOGLE_API_KEY = "dummy-key";
 
     const service = new TopicResolverService();
     (
