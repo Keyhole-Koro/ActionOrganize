@@ -4,7 +4,7 @@ import { InputRepository } from "../repositories/input-repository.js";
 import { InputProgressRepository } from "../repositories/input-progress-repository.js";
 import { AtomRepository } from "../repositories/atom-repository.js";
 import type { EventEnvelope } from "../models/envelope.js";
-import { callGemini, MockGeminiError } from "../lib/gemini-client.js";
+import { callGemini } from "../lib/gemini-client.js";
 import { writeMarkdown } from "../lib/gcs-writer.js";
 import { logger } from "../lib/logger.js";
 
@@ -110,31 +110,15 @@ export class A0A1WriteService {
     );
 
     // ── Stage 2: Gemini normalization ─────────────────────────────────────
-    let normalizedAtoms: NormalizedAtom[];
-    try {
-      normalizedAtoms = await this.normalizeWithGemini(candidates);
-      logger.info(
-        {
-          inputId,
-          total: normalizedAtoms.length,
-          rejected: normalizedAtoms.filter((a) => a.reject).length,
-        },
-        "A1: Gemini normalization complete",
-      );
-    } catch (error) {
-      if (error instanceof MockGeminiError) {
-        logger.info({ inputId }, "A1: using deterministic fallback (mock mode)");
-      } else {
-        logger.warn({ inputId, error }, "A1: Gemini failed, using deterministic fallback");
-      }
-      normalizedAtoms = candidates.map((c) => ({
-        title: c.text.slice(0, 80),
-        claim: c.text,
-        kind: "fact" as AtomKind,
-        confidence: 0.6,
-        reject: false,
-      }));
-    }
+    const normalizedAtoms = await this.normalizeWithGemini(candidates);
+    logger.info(
+      {
+        inputId,
+        total: normalizedAtoms.length,
+        rejected: normalizedAtoms.filter((a) => a.reject).length,
+      },
+      "A1: Gemini normalization complete",
+    );
 
     // ── Filter rejected ───────────────────────────────────────────────────
     const acceptedAtoms = normalizedAtoms.filter((a) => !a.reject);

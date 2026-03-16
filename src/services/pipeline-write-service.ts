@@ -14,7 +14,7 @@ import { EdgeRepository } from "../repositories/edge-repository.js";
 import { AtomRepository } from "../repositories/atom-repository.js";
 import { dedupeNodeIds, resolveNodeAsync } from "./cleaner-entity-resolution.js";
 import { EvidenceRepository } from "../repositories/evidence-repository.js";
-import { callGemini, MockGeminiError } from "../lib/gemini-client.js";
+import { callGemini } from "../lib/gemini-client.js";
 import { writeHtml } from "../lib/gcs-writer.js";
 import { logger } from "../lib/logger.js";
 
@@ -427,9 +427,8 @@ export class PipelineWriteService {
       return;
     }
 
-    // Try LLM-generated description
-    try {
-      const bundle = await this.bundleRepository.get(
+    // LLM-generated description
+    const bundle = await this.bundleRepository.get(
         envelope.workspaceId,
         envelope.topicId,
         bundleId,
@@ -464,18 +463,11 @@ Return ONLY the JSON object.`;
         return { html: typeof obj.html === "string" ? obj.html : "" };
       });
 
-      if (parsed.html.length > 0) {
-        try {
-          await writeHtml(descRef, parsed.html);
-        } catch (writeError) {
-          logger.warn({ writeError, bundleId }, "failed to write LLM bundle desc to GCS");
-        }
-      }
-    } catch (error) {
-      if (error instanceof MockGeminiError) {
-        logger.info({ bundleId }, "A6: mock mode, skipping LLM bundle description");
-      } else {
-        logger.warn({ error, bundleId }, "A6: LLM description failed, keeping template desc");
+    if (parsed.html.length > 0) {
+      try {
+        await writeHtml(descRef, parsed.html);
+      } catch (writeError) {
+        logger.warn({ writeError, bundleId }, "failed to write LLM bundle desc to GCS");
       }
     }
 
@@ -626,11 +618,8 @@ Return ONLY the JSON object.`;
     const currentTitle = existing.get("title") ?? nodeId;
     const currentKind = existing.get("kind") ?? "topic";
 
-    // Try LLM rollup
-    let rollupHtml: string;
-    let contextSummary: string;
-    try {
-      const childSummaries = childNodes
+    // LLM rollup
+    const childSummaries = childNodes
         .map((c) => `- ${c.title}: ${c.contextSummary ?? "(no summary)"}`.slice(0, 200))
         .join("\n");
 
@@ -661,17 +650,8 @@ Return ONLY the JSON object, no other text.`;
           };
         },
       );
-      rollupHtml = parsed.html;
-      contextSummary = parsed.contextSummary;
-    } catch (error) {
-      if (error instanceof MockGeminiError) {
-        logger.info({ nodeId }, "A7: mock mode, using template rollup");
-      } else {
-        logger.warn({ nodeId, error }, "A7: Gemini failed, using template rollup");
-      }
-      rollupHtml = `<section><h1>${this.escapeHtml(String(currentTitle))}</h1><p>Rollup generation ${generation}</p></section>`;
-      contextSummary = `Rollup generated for ${nodeId} at generation ${generation}`;
-    }
+    const rollupHtml = parsed.html;
+    const contextSummary = parsed.contextSummary;
 
     // Write rollup HTML to GCS
     const rollupRef = `mind/node_rollup/${nodeId}/v${generation}.html`;

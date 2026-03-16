@@ -1,5 +1,5 @@
 import type { NodeCandidate } from "../repositories/node-repository.js";
-import { callGemini, MockGeminiError } from "../lib/gemini-client.js";
+import { callGemini } from "../lib/gemini-client.js";
 import { logger } from "../lib/logger.js";
 
 function normalizeTitle(input: string): string {
@@ -97,30 +97,17 @@ export async function resolveNodeAsync(
   }
 
   // Ambiguous zone — ask Gemini
-  try {
-    const topCandidates = scored.slice(0, 5);
-    const geminiResult = await resolveWithGemini(options, topCandidates);
-    if (geminiResult.decision === "merge" && geminiResult.targetNodeId) {
-      const target = topCandidates.find((c) => c.node.nodeId === geminiResult.targetNodeId);
-      return {
-        nodeId: geminiResult.targetNodeId,
-        isMerged: true,
-        similarity: target?.score ?? best.score,
-      };
-    }
-    return { nodeId: options.fallbackNodeId, isMerged: false, similarity: best.score };
-  } catch (error) {
-    if (error instanceof MockGeminiError) {
-      logger.info("entity-resolution: mock mode, using Jaccard fallback");
-    } else {
-      logger.warn({ error }, "entity-resolution: Gemini failed, using Jaccard fallback");
-    }
-    // Jaccard fallback: merge if >= original threshold
-    if (best.score >= AMBIGUOUS_LOW) {
-      return { nodeId: best.node.nodeId, isMerged: true, similarity: best.score };
-    }
-    return { nodeId: options.fallbackNodeId, isMerged: false, similarity: best.score };
+  const topCandidates = scored.slice(0, 5);
+  const geminiResult = await resolveWithGemini(options, topCandidates);
+  if (geminiResult.decision === "merge" && geminiResult.targetNodeId) {
+    const target = topCandidates.find((c) => c.node.nodeId === geminiResult.targetNodeId);
+    return {
+      nodeId: geminiResult.targetNodeId,
+      isMerged: true,
+      similarity: target?.score ?? best.score,
+    };
   }
+  return { nodeId: options.fallbackNodeId, isMerged: false, similarity: best.score };
 }
 
 /**

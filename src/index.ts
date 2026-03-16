@@ -23,7 +23,6 @@ void (async () => {
         storageEmulatorHost: env.STORAGE_EMULATOR_HOST,
         organizeGcsBucket: env.ORGANIZE_GCS_BUCKET,
         leaseTtlSeconds: env.LEASE_TTL_SECONDS,
-        vertexUseRealApi: env.VERTEX_USE_REAL_API,
       },
       "organize server started",
     );

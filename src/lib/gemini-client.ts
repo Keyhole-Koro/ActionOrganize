@@ -20,9 +20,6 @@ const DEFAULT_TIMEOUT_MS = 10_000;
 
 /**
  * Shared Gemini client for Organize pipeline agents.
- *
- * When `VERTEX_USE_REAL_API` is false a deterministic mock is returned instead
- * so the pipeline can run without external dependencies.
  */
 export async function callGemini<T = unknown>(
     prompt: string,
@@ -34,12 +31,6 @@ export async function callGemini<T = unknown>(
         temperature = 0,
         jsonMode = true,
     } = options;
-
-    if (!env.VERTEX_USE_REAL_API || !env.GOOGLE_API_KEY) {
-        logger.info("gemini-client: mock mode, returning empty response");
-        // Return a mock — the caller's validate function decides the shape
-        throw new MockGeminiError();
-    }
 
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), timeoutMs);
@@ -89,17 +80,6 @@ export async function callGemini<T = unknown>(
     }
 
     return { raw: text, parsed: validate(parsed) };
-}
-
-/**
- * Error thrown when Gemini is in mock mode. Callers should catch this and apply
- * their fallback logic.
- */
-export class MockGeminiError extends Error {
-    constructor() {
-        super("Gemini mock mode — no real API call made");
-        this.name = "MockGeminiError";
-    }
 }
 
 function extractJson(text: string): string {

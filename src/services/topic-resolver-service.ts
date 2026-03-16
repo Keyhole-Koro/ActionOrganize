@@ -1,5 +1,6 @@
 import { env } from "../config/env.js";
 import { TemporaryDependencyError } from "../core/errors.js";
+import { callGemini } from "../lib/gemini-client.js";
 import { logger } from "../lib/logger.js";
 import { AtomRepository } from "../repositories/atom-repository.js";
 import { TopicRepository, type TopicCandidate } from "../repositories/topic-repository.js";
@@ -58,7 +59,7 @@ export class TopicResolverService {
       scored.map(({ candidate }) => [candidate.topicId, candidate.status]),
     );
 
-    if (!env.VERTEX_USE_REAL_API || scored.length === 0) {
+    if (scored.length === 0) {
       const resolution = this.resolveDeterministically(
         envelope,
         scored,
@@ -191,69 +192,12 @@ export class TopicResolverService {
   }
 
   private async resolveWithGemini(queryText: string, scored: ScoredCandidate[]): Promise<GeminiResolution> {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), GEMINI_TIMEOUT_MS);
-
-    const response = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/${env.GEMINI_MODEL}:generateContent?key=${env.GOOGLE_API_KEY}`,
-
-      {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-        },
-        body: JSON.stringify({
-          contents: [
-            {
-              role: "user",
-              parts: [
-                {
-                  text: this.buildGeminiPrompt(queryText, scored.slice(0, 5)),
-                },
-              ],
-            },
-          ],
-          generationConfig: {
-            temperature: 0,
-            responseMimeType: "application/json",
-          },
-        }),
-        signal: controller.signal,
-      },
-    )
-      .catch((error) => {
-        if (error instanceof Error && error.name === "AbortError") {
-          throw new TemporaryDependencyError("topic resolver Gemini request timed out");
-        }
-        throw new TemporaryDependencyError(
-          `topic resolver Gemini request failed: ${error instanceof Error ? error.message : "unknown error"}`,
-        );
-      })
-      .finally(() => {
-        clearTimeout(timeout);
-      });
-
-    if (!response.ok) {
-      throw new TemporaryDependencyError(`topic resolver Gemini request failed with ${response.status}`);
-    }
-
-    const data = (await response.json()) as {
-      candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
-    };
-
-    const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
-    if (typeof text !== "string" || text.length === 0) {
-      throw new TemporaryDependencyError("topic resolver Gemini response was empty");
-    }
-
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(this.extractJson(text));
-    } catch {
-      throw new TemporaryDependencyError("topic resolver Gemini response was not valid JSON");
-    }
-
-    return this.validateGeminiResolution(parsed);
+    const { parsed } = await callGemini(
+      this.buildGeminiPrompt(queryText, scored.slice(0, 5)),
+      (value) => this.validateGeminiResolution(value),
+      { timeoutMs: GEMINI_TIMEOUT_MS },
+    );
+    return parsed;
   }
 
   private buildGeminiPrompt(queryText: string, scored: ScoredCandidate[]): string {
@@ -276,14 +220,6 @@ export class TopicResolverService {
       `queryText: ${queryText}`,
       `candidates: ${JSON.stringify(candidates)}`,
     ].join("\n");
-  }
-
-  private extractJson(text: string): string {
-    const trimmed = text.trim();
-    if (trimmed.startsWith("```") && trimmed.endsWith("```")) {
-      return trimmed.replace(/^```json\s*/i, "").replace(/^```\s*/i, "").replace(/```$/, "").trim();
-    }
-    return trimmed;
   }
 
   private validateGeminiResolution(value: unknown): GeminiResolution {
