@@ -23,10 +23,12 @@ export class EventLedgerRepository implements EventLedgerPort {
         if (data?.status === "succeeded") {
           throw new DuplicateEventError("event already processed");
         }
-        throw new TemporaryDependencyError("event is already in progress");
+        if (data?.status === "started") {
+          throw new TemporaryDependencyError("event is already in progress");
+        }
       }
 
-      tx.create(ref, {
+      tx.set(ref, {
         agent: agentName,
         topicId: envelope.topicId,
         type: envelope.type,
@@ -35,7 +37,10 @@ export class EventLedgerRepository implements EventLedgerPort {
         status: "started",
         startedAt: FieldValue.serverTimestamp(),
         updatedAt: FieldValue.serverTimestamp(),
-      });
+        errorCode: FieldValue.delete(),
+        errorMessage: FieldValue.delete(),
+        finishedAt: FieldValue.delete(),
+      }, { merge: true });
     });
 
     return ref;

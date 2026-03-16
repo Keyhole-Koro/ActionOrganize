@@ -2,6 +2,7 @@ import { Storage } from "@google-cloud/storage";
 import { env } from "../config/env.js";
 
 let storageInstance: Storage | undefined;
+const checkedBuckets = new Set<string>();
 
 export function getStorage(): Storage {
   if (storageInstance) {
@@ -13,4 +14,31 @@ export function getStorage(): Storage {
   });
 
   return storageInstance;
+}
+
+export async function assertBucketExists(bucketName: string): Promise<void> {
+  if (checkedBuckets.has(bucketName)) {
+    return;
+  }
+
+  const exists = env.STORAGE_EMULATOR_HOST
+    ? await bucketExistsViaEmulator(bucketName)
+    : (await getStorage().bucket(bucketName).exists())[0];
+  if (!exists) {
+    throw new Error(`Storage bucket ${bucketName} is required`);
+  }
+
+  checkedBuckets.add(bucketName);
+}
+
+async function bucketExistsViaEmulator(bucketName: string): Promise<boolean> {
+  const baseUrl = env.STORAGE_EMULATOR_HOST.replace(/\/$/, "");
+  const response = await fetch(`${baseUrl}/storage/v1/b/${encodeURIComponent(bucketName)}`);
+  if (response.status === 404) {
+    return false;
+  }
+  if (!response.ok) {
+    throw new Error(`Storage bucket lookup failed with ${response.status}`);
+  }
+  return true;
 }

@@ -45,3 +45,7 @@ export class MemoryEventLedgerRepository implements EventLedgerPort {
     });
   }
 }
+
+export function resetMemoryEventLedgerStore() {
+  store.clear();
+}
