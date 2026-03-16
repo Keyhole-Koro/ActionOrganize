@@ -76,9 +76,7 @@ class InputReceivedHandler implements AgentHandler {
 
   async handle({ envelope }: AgentContext): Promise<AgentResult> {
     const inputId = requireString(envelope.payload, "inputId");
-    const atomIds = [`atom:${envelope.topicId}:${inputId}:0`];
-
-    await writeService.onInputReceived(envelope, inputId, atomIds);
+    const atomIds = await writeService.onInputReceived(envelope, inputId);
 
     return {
       ack: true,
@@ -296,8 +294,8 @@ class AtomReissuedHandler implements AgentHandler {
   readonly eventType = "atom.reissued";
 
   async handle({ envelope }: AgentContext): Promise<AgentResult> {
-    const atomId = optionalString(envelope.payload, "atomId") ?? "unknown";
-    const reason = optionalString(envelope.payload, "reason") ?? "reissued";
+    const atomId = requireString(envelope.payload, "atomId");
+    const reason = optionalString(envelope.payload, "reason") ?? "unknown";
 
     // Re-emit as input.received to re-process through A1 → TopicResolver
     return {

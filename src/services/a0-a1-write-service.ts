@@ -81,9 +81,9 @@ export class A0A1WriteService {
 
   // ── A1 InputReceived (two-stage atom extraction) ────────────────────────
 
-  async onInputReceived(envelope: EventEnvelope, inputId: string, _previousAtomIds: string[]) {
+  async onInputReceived(envelope: EventEnvelope, inputId: string): Promise<string[]> {
     if (!this.isFirestoreBackend()) {
-      return;
+      return [];
     }
 
     await this.inputProgressRepository.advance({
@@ -97,10 +97,10 @@ export class A0A1WriteService {
     });
 
     // ── Resolve source text ───────────────────────────────────────────────
-    const sourceText =
-      typeof envelope.payload.text === "string" && envelope.payload.text.length > 0
-        ? envelope.payload.text
-        : `Input ${inputId} content`;
+    if (typeof envelope.payload.text !== "string" || envelope.payload.text.trim().length === 0) {
+      throw new Error(`input.received payload.text is required but was missing or empty (inputId=${inputId})`);
+    }
+    const sourceText = envelope.payload.text;
 
     // ── Stage 1: Deterministic claim boundary ─────────────────────────────
     const candidates = splitIntoClaims(sourceText);
@@ -172,13 +172,6 @@ export class A0A1WriteService {
     }
 
     // ── Update handler's atom IDs for downstream ──────────────────────────
-    // The handler will use these atomIds for the emitted event
-    // We mutate the original array to communicate back
-    _previousAtomIds.length = 0;
-    for (const { atomId } of atomEntries) {
-      _previousAtomIds.push(atomId);
-    }
-
     await this.inputProgressRepository.advance({
       workspaceId: envelope.workspaceId,
       topicId: envelope.topicId,
@@ -188,6 +181,8 @@ export class A0A1WriteService {
       lastEventType: "atom.created",
       traceId: envelope.traceId,
     });
+
+    return atomEntries.map(({ atomId }) => atomId);
   }
 
   // ── TopicResolved ───────────────────────────────────────────────────────
@@ -228,17 +223,29 @@ export class A0A1WriteService {
       if (!Array.isArray(value)) {
         throw new Error("Expected an array of normalized atoms");
       }
-      return value.map((item: Record<string, unknown>) => ({
-        title: typeof item.title === "string" ? item.title.slice(0, 120) : "Untitled",
-        claim: typeof item.claim === "string" ? item.claim : "",
-        kind: VALID_KINDS.includes(item.kind as AtomKind) ? (item.kind as AtomKind) : "fact",
-        confidence: snapToConfidenceBucket(
-          typeof item.confidence === "number" ? item.confidence : 0.6,
-        ),
-        reject: item.reject === true,
-        rejectReason: typeof item.rejectReason === "string" ? item.rejectReason : undefined,
-      }));
-    });
+      return value.map((item: Record<string, unknown>, i: number) => {
+        if (typeof item.title !== "string" || item.title.trim().length === 0) {
+          throw new Error(`Gemini normalization: item[${i}].title is missing or empty`);
+        }
+        if (typeof item.claim !== "string" || item.claim.trim().length === 0) {
+          throw new Error(`Gemini normalization: item[${i}].claim is missing or empty`);
+        }
+        if (!VALID_KINDS.includes(item.kind as AtomKind)) {
+          throw new Error(`Gemini normalization: item[${i}].kind "${item.kind}" is not a valid AtomKind`);
+        }
+        if (typeof item.confidence !== "number" || !Number.isFinite(item.confidence)) {
+          throw new Error(`Gemini normalization: item[${i}].confidence is not a number`);
+        }
+        return {
+          title: item.title.slice(0, 120),
+          claim: item.claim,
+          kind: item.kind as AtomKind,
+          confidence: snapToConfidenceBucket(item.confidence),
+          reject: item.reject === true,
+          rejectReason: typeof item.rejectReason === "string" ? item.rejectReason : undefined,
+        };
+      });
+    }, { modelTier: "fast" });
 
     return parsed;
   }

@@ -28,7 +28,7 @@ export class AtomRepository {
           claim: record.claim,
           kind: record.kind,
           confidence: record.confidence,
-          reissueCount: 0,
+          reissueCount: FieldValue.increment(0),
           updatedAt: FieldValue.serverTimestamp(),
           createdAt: FieldValue.serverTimestamp(),
         },

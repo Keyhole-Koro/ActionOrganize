@@ -196,13 +196,22 @@ Return ONLY the JSON object, no other text.`;
 
   const { parsed } = await callGemini<GeminiEntityResolution>(prompt, (value) => {
     const obj = value as Record<string, unknown>;
+    if (obj.decision !== "merge" && obj.decision !== "create") {
+      throw new Error(`Gemini entity resolution: invalid decision "${obj.decision}"`);
+    }
+    if (typeof obj.confidence !== "number" || !Number.isFinite(obj.confidence)) {
+      throw new Error("Gemini entity resolution: confidence is not a finite number");
+    }
+    if (typeof obj.reason !== "string" || obj.reason.trim().length === 0) {
+      throw new Error("Gemini entity resolution: reason is missing or empty");
+    }
     return {
-      decision: obj.decision === "merge" ? "merge" : "create",
+      decision: obj.decision,
       targetNodeId: typeof obj.targetNodeId === "string" ? obj.targetNodeId : undefined,
-      confidence: typeof obj.confidence === "number" ? obj.confidence : 0.5,
-      reason: typeof obj.reason === "string" ? obj.reason : "unknown",
+      confidence: obj.confidence,
+      reason: obj.reason,
     };
-  });
+  }, { modelTier: "quality" });
 
   return parsed;
 }

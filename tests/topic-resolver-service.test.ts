@@ -21,12 +21,12 @@ function makeEnvelope(payload: Record<string, unknown> = {}): EventEnvelope {
 describe("TopicResolverService", () => {
   afterEach(() => {
     vi.restoreAllMocks();
-    env.VERTEX_USE_REAL_API = false;
-    env.GOOGLE_API_KEY = undefined;
+    env.GOOGLE_API_KEY = "dummy-key";
+    env.GEMINI_MODEL_FAST = "gemini-3-flash";
+    env.GEMINI_MODEL_QUALITY = "gemini-3-pro";
   });
 
-  it("uses deterministic resolution when real API is disabled", async () => {
-    env.VERTEX_USE_REAL_API = false;
+  it("uses deterministic resolution when high-confidence winner exists", async () => {
     const infoSpy = vi.spyOn(logger, "info").mockImplementation(() => logger);
 
     const service = new TopicResolverService();
@@ -55,17 +55,17 @@ describe("TopicResolverService", () => {
     expect(result.resolvedTopicId).toBe("tp-ai");
     expect(infoSpy).toHaveBeenCalledWith(
       expect.objectContaining({
-        resolverMode: "deterministic",
+        resolverMode: "deterministic-short-circuit",
         resolutionMode: "existing",
       }),
       "topic resolved",
     );
   });
 
-  it("uses Gemini decision when real API is enabled", async () => {
-    env.VERTEX_USE_REAL_API = true;
+  it("uses Gemini decision for ambiguous candidates", async () => {
     env.GOOGLE_API_KEY = "dummy-key";
-    env.GEMINI_MODEL = "gemini-3-flash";
+    env.GEMINI_MODEL_FAST = "gemini-3-flash";
+    env.GEMINI_MODEL_QUALITY = "gemini-3-pro";
     const infoSpy = vi.spyOn(logger, "info").mockImplementation(() => logger);
 
     const service = new TopicResolverService();
@@ -76,8 +76,8 @@ describe("TopicResolverService", () => {
       }
     ).topicRepository = {
       listCandidates: vi.fn().mockResolvedValue([
-        { topicId: "tp-1", title: "Product strategy", status: "active" },
-        { topicId: "tp-2", title: "Backend APIs", status: "active" },
+        { topicId: "tp-1", title: "Product roadmap strategy", status: "active" },
+        { topicId: "tp-2", title: "Backend API design", status: "active" },
       ]),
     };
     (
@@ -85,7 +85,7 @@ describe("TopicResolverService", () => {
         atomRepository: { getByIds: () => Promise<unknown[]> };
       }
     ).atomRepository = {
-      getByIds: vi.fn().mockResolvedValue([{ title: "strategy", claim: "product roadmap" }]),
+      getByIds: vi.fn().mockResolvedValue([]),
     };
 
     const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValue({
@@ -119,7 +119,7 @@ describe("TopicResolverService", () => {
     expect(infoSpy).toHaveBeenCalledWith(
       expect.objectContaining({
         resolverMode: "gemini",
-        geminiModel: "gemini-3-flash",
+        geminiModel: "gemini-3-pro",
         resolutionMode: "existing",
       }),
       "topic resolved",
@@ -127,8 +127,8 @@ describe("TopicResolverService", () => {
   });
 
   it("throws retryable error when Gemini request fails", async () => {
-    env.VERTEX_USE_REAL_API = true;
     env.GOOGLE_API_KEY = "dummy-key";
+    env.GEMINI_MODEL_QUALITY = "gemini-3-pro";
 
     const service = new TopicResolverService();
     (
@@ -155,8 +155,8 @@ describe("TopicResolverService", () => {
   });
 
   it("falls back to create_new when Gemini picks a topic outside candidates", async () => {
-    env.VERTEX_USE_REAL_API = true;
     env.GOOGLE_API_KEY = "dummy-key";
+    env.GEMINI_MODEL_QUALITY = "gemini-3-pro";
 
     const service = new TopicResolverService();
     (
@@ -166,8 +166,8 @@ describe("TopicResolverService", () => {
       }
     ).topicRepository = {
       listCandidates: vi.fn().mockResolvedValue([
-        { topicId: "tp-1", title: "Topic one", status: "active" },
-        { topicId: "tp-2", title: "Topic two", status: "active" },
+        { topicId: "tp-1", title: "Topic one details", status: "active" },
+        { topicId: "tp-2", title: "Details topic one", status: "active" },
       ]),
     };
     (

@@ -82,6 +82,36 @@ export class TopicResolverService {
       return resolution;
     }
 
+    // Short-circuit: when the top candidate has a clear high-confidence score,
+    // skip Gemini and resolve deterministically to avoid unnecessary API calls.
+    const topForShortCircuit = scored[0];
+    const secondForShortCircuit = scored[1];
+    const hasClearWinner =
+      topForShortCircuit.score >= ATTACH_THRESHOLD &&
+      (!secondForShortCircuit || topForShortCircuit.score - secondForShortCircuit.score >= SCORE_GAP_THRESHOLD);
+    if (hasClearWinner) {
+      const resolution = this.resolveDeterministically(
+        envelope,
+        scored,
+        candidateTopicIds,
+        candidateTopicStates,
+      );
+      logger.info(
+        {
+          traceId: envelope.traceId,
+          workspaceId: envelope.workspaceId,
+          topicId: envelope.topicId,
+          inputId,
+          resolutionMode: resolution.resolutionMode,
+          resolutionConfidence: resolution.resolutionConfidence,
+          candidateTopicIds,
+          resolverMode: "deterministic-short-circuit",
+        },
+        "topic resolved",
+      );
+      return resolution;
+    }
+
     const gemini = await this.resolveWithGemini(queryText, scored);
     const top = scored[0];
     const second = scored[1];
@@ -117,7 +147,7 @@ export class TopicResolverService {
             resolutionConfidence: resolution.resolutionConfidence,
             candidateTopicIds,
             resolvedTopicId: resolution.resolvedTopicId,
-            geminiModel: env.GEMINI_MODEL,
+            geminiModel: env.GEMINI_MODEL_QUALITY,
             resolverMode: "gemini",
           },
           "topic resolved",
@@ -129,7 +159,7 @@ export class TopicResolverService {
     const resolution: TopicResolution = {
       resolvedTopicId: envelope.topicId,
       resolutionMode: "new",
-      resolutionConfidence: Math.max(0.35, gemini.confidence || top.score),
+      resolutionConfidence: Math.max(0.35, gemini.confidence ?? top.score),
       resolutionReason: candidatesCompete
         ? "top candidates are too close, so creating a new topic is safer"
         : gemini.reason,
@@ -147,7 +177,7 @@ export class TopicResolverService {
         resolutionConfidence: resolution.resolutionConfidence,
         candidateTopicIds,
         resolvedTopicId: resolution.resolvedTopicId,
-        geminiModel: env.GEMINI_MODEL,
+        geminiModel: env.GEMINI_MODEL_QUALITY,
         resolverMode: "gemini",
       },
       "topic resolved",
@@ -195,7 +225,7 @@ export class TopicResolverService {
     const { parsed } = await callGemini(
       this.buildGeminiPrompt(queryText, scored.slice(0, 5)),
       (value) => this.validateGeminiResolution(value),
-      { timeoutMs: GEMINI_TIMEOUT_MS },
+      { timeoutMs: GEMINI_TIMEOUT_MS, modelTier: "quality" },
     );
     return parsed;
   }

@@ -9,6 +9,8 @@ export interface GeminiOptions {
     temperature?: number;
     /** If true request JSON output via responseMimeType. Defaults to true. */
     jsonMode?: boolean;
+    /** Model tier used for the request. */
+    modelTier: "fast" | "quality";
 }
 
 export interface GeminiResponse<T = unknown> {
@@ -24,18 +26,20 @@ const DEFAULT_TIMEOUT_MS = 10_000;
 export async function callGemini<T = unknown>(
     prompt: string,
     validate: (value: unknown) => T,
-    options: GeminiOptions = {},
+    options: GeminiOptions,
 ): Promise<GeminiResponse<T>> {
     const {
         timeoutMs = DEFAULT_TIMEOUT_MS,
         temperature = 0,
         jsonMode = true,
+        modelTier,
     } = options;
 
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), timeoutMs);
 
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/${env.GEMINI_MODEL}:generateContent?key=${env.GOOGLE_API_KEY}`;
+    const model = modelTier === "quality" ? env.GEMINI_MODEL_QUALITY : env.GEMINI_MODEL_FAST;
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${env.GOOGLE_API_KEY}`;
 
     const response = await fetch(url, {
         method: "POST",

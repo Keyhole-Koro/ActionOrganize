@@ -20,10 +20,40 @@ describe("PipelineWriteService.onBundleDescribed", () => {
   it("writes described status to repository on firestore backend", async () => {
     const service = new PipelineWriteService();
     const markDescribed = vi.fn().mockResolvedValue(undefined);
+    const get = vi.fn().mockResolvedValue({ sourceAtomIds: [], sourceDraftVersion: 1 });
+    const writeHtml = vi.fn().mockResolvedValue(undefined);
 
-    (service as unknown as { bundleRepository: { markDescribed: typeof markDescribed } }).bundleRepository = {
+    (
+      service as unknown as {
+        bundleRepository: { markDescribed: typeof markDescribed; get: typeof get };
+        bundleDescriptionRepository: { writeHtml: typeof writeHtml };
+      }
+    ).bundleRepository = {
       markDescribed,
+      get,
     };
+    (
+      service as unknown as {
+        bundleDescriptionRepository: { writeHtml: typeof writeHtml };
+      }
+    ).bundleDescriptionRepository = { writeHtml };
+
+    vi.spyOn(globalThis, "fetch").mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        candidates: [
+          {
+            content: {
+              parts: [
+                {
+                  text: JSON.stringify({ html: "<html><body>ok</body></html>" }),
+                },
+              ],
+            },
+          },
+        ],
+      }),
+    } as Response);
 
     await service.onBundleDescribed(
       makeEnvelope("bundle.described"),
@@ -37,6 +67,7 @@ describe("PipelineWriteService.onBundleDescribed", () => {
       "bundle-1",
       "mind/bundle_desc/bundle-1/v1.html",
     );
+    expect(writeHtml).toHaveBeenCalledWith("mind/bundle_desc/bundle-1/v1.html", "<html><body>ok</body></html>");
   });
 
   it("is no-op when backend check returns false", async () => {
@@ -65,7 +96,12 @@ describe("PipelineWriteService.onBundleDescribed", () => {
 describe("PipelineWriteService.onBundleCreated", () => {
   it("throws TemporaryDependencyError when bundle description write fails", async () => {
     const service = new PipelineWriteService();
-    const get = vi.fn().mockResolvedValue(null);
+    const get = vi.fn().mockResolvedValue({
+      bundleStatus: "drafted",
+      sourceAtomIds: [],
+      schemaVersion: 1,
+      sourceDraftVersion: 1,
+    });
     const tryStartApply = vi.fn().mockResolvedValue(true);
     const markApplyFailed = vi.fn().mockResolvedValue(undefined);
     const writeHtml = vi.fn().mockRejectedValue(new Error("gcs unavailable"));

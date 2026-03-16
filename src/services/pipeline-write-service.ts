@@ -15,7 +15,6 @@ import { AtomRepository } from "../repositories/atom-repository.js";
 import { dedupeNodeIds, resolveNodeAsync } from "./cleaner-entity-resolution.js";
 import { EvidenceRepository } from "../repositories/evidence-repository.js";
 import { callGemini } from "../lib/gemini-client.js";
-import { writeHtml } from "../lib/gcs-writer.js";
 import { logger } from "../lib/logger.js";
 
 type DraftBundleResult = {
@@ -156,14 +155,16 @@ export class PipelineWriteService {
         reissuedAtomIds: [],
       };
     }
-    const bundleForApply =
-      bundle?.bundleStatus === "error"
-        ? {
-          ...bundle,
-          bundleStatus: "applying" as const,
-          applyError: undefined,
-        }
-        : bundle;
+      const bundleForApply =
+        bundle === null || bundle === undefined
+          ? (() => { throw new TemporaryDependencyError(`bundle ${bundleId} not found in Firestore`); })()
+          : bundle.bundleStatus === "error"
+            ? {
+              ...bundle,
+              bundleStatus: "applying" as const,
+              applyError: undefined,
+            }
+            : bundle;
     const outlineSummary = this.toOutlineSummary(envelope.topicId, bundleId, sourceDraftVersion);
     const descHtml = this.toBundleDescHtml(envelope.topicId, bundleId, sourceDraftVersion, bundleForApply);
     const sourceAtomIds = bundleForApply?.sourceAtomIds ?? [];
@@ -399,7 +400,7 @@ export class PipelineWriteService {
         ),
       );
     } catch (error) {
-      logger.warn({ error, bundleId }, "failed to write evidence docs, continuing");
+        throw error;
     }
 
     await this.bundleRepository.markApplied(envelope.workspaceId, envelope.topicId, bundleId);
@@ -460,16 +461,13 @@ Return ONLY the JSON object.`;
 
       const { parsed } = await callGemini<{ html: string }>(prompt, (value) => {
         const obj = value as Record<string, unknown>;
-        return { html: typeof obj.html === "string" ? obj.html : "" };
-      });
+        if (typeof obj.html !== "string" || obj.html.trim().length === 0) {
+          throw new Error("Gemini bundle description: html is missing or empty");
+        }
+        return { html: obj.html };
+      }, { modelTier: "quality" });
 
-    if (parsed.html.length > 0) {
-      try {
-        await writeHtml(descRef, parsed.html);
-      } catch (writeError) {
-        logger.warn({ writeError, bundleId }, "failed to write LLM bundle desc to GCS");
-      }
-    }
+    await this.bundleDescriptionRepository.writeHtml(descRef, parsed.html);
 
     await this.bundleRepository.markDescribed(
       envelope.workspaceId,
@@ -504,8 +502,8 @@ Return ONLY the JSON object.`;
             envelope.topicId,
             nodeId,
           );
-        } catch {
-          // fallback to 0
+        } catch (e) {
+          throw e;
         }
 
         // Get real child count for relation importance
@@ -518,8 +516,8 @@ Return ONLY the JSON object.`;
             1000,
           );
           childCount = children.length;
-        } catch {
-          // fallback to 0
+        } catch (e) {
+          throw e;
         }
 
         // Get node depth by traversing parentId
@@ -539,8 +537,8 @@ Return ONLY the JSON object.`;
             depth++;
             currentId = parentId;
           }
-        } catch {
-          // fallback to 0
+        } catch (e) {
+          throw e;
         }
 
         // Compute edge count
@@ -600,7 +598,7 @@ Return ONLY the JSON object.`;
     generation: number,
   ): Promise<{ topicId: string; nodeId: string; skipped: boolean }> {
     if (!this.isFirestoreBackend()) {
-      return { topicId: envelope.topicId, nodeId, skipped: false };
+      return { topicId: envelope.topicId, nodeId, skipped: true };
     }
 
     const existing = await this.nodeRepository.docRef(envelope.workspaceId, envelope.topicId, nodeId).get();
@@ -641,25 +639,22 @@ Return ONLY the JSON object, no other text.`;
         prompt,
         (value) => {
           const obj = value as Record<string, unknown>;
-          return {
-            html: typeof obj.html === "string" ? obj.html : `<section><h1>${currentTitle}</h1></section>`,
-            contextSummary:
-              typeof obj.contextSummary === "string"
-                ? obj.contextSummary
-                : `Summary for ${currentTitle}`,
-          };
+          if (typeof obj.html !== "string" || obj.html.trim().length === 0) {
+            throw new Error("Gemini rollup: html is missing or empty");
+          }
+          if (typeof obj.contextSummary !== "string" || obj.contextSummary.trim().length === 0) {
+            throw new Error("Gemini rollup: contextSummary is missing or empty");
+          }
+          return { html: obj.html, contextSummary: obj.contextSummary };
         },
+        { modelTier: "quality" },
       );
     const rollupHtml = parsed.html;
     const contextSummary = parsed.contextSummary;
 
     // Write rollup HTML to GCS
     const rollupRef = `mind/node_rollup/${nodeId}/v${generation}.html`;
-    try {
-      await writeHtml(rollupRef, rollupHtml);
-    } catch (error) {
-      logger.warn({ error, nodeId }, "failed to write rollup to GCS, continuing");
-    }
+    await this.bundleDescriptionRepository.writeHtml(rollupRef, rollupHtml);
 
     await this.nodeRepository.upsert({
       workspaceId: envelope.workspaceId,
@@ -675,7 +670,6 @@ Return ONLY the JSON object, no other text.`;
 
     return { topicId: envelope.topicId, nodeId, skipped: false };
   }
-
   async onTopicSchemaUpdated(envelope: EventEnvelope, schemaVersion: number) {
     if (!this.isFirestoreBackend()) {
       return;
@@ -689,7 +683,6 @@ Return ONLY the JSON object, no other text.`;
       if (schemaVersion <= currentVersion) {
         return;
       }
-
       const schemaRef = this.topicRepository.schemaDocRef(
         envelope.workspaceId,
         envelope.topicId,
@@ -710,7 +703,6 @@ Return ONLY the JSON object, no other text.`;
         {
           topicId: envelope.topicId,
           version: schemaVersion,
-          status: "active",
           node_kinds: FieldValue.arrayUnion("topic", "claim"),
           relation_types: FieldValue.arrayUnion("contains"),
           attribute_defs: this.defaultSchemaAttributeDefs(),
@@ -791,30 +783,6 @@ Return ONLY the JSON object, no other text.`;
 
   private toEdgeId(sourceNodeId: string, targetNodeId: string) {
     return `edge:${sourceNodeId}->${targetNodeId}`;
-  }
-
-  private async deriveClusterTitleLLM(atoms: Array<{ title: string; claim: string }>): Promise<string[]> {
-    if (atoms.length === 0) return [];
-
-    const atomList = atoms
-      .slice(0, 20)
-      .map((a, i) => `[${i}] "${a.title}": ${a.claim.slice(0, 100)}`)
-      .join("\n");
-
-    const prompt = `You are a knowledge organization agent. Group the following claims into 3-7 thematic clusters and return a JSON array of cluster title strings.
-
-Claims:
-${atomList}
-
-Return ONLY a JSON array of cluster title strings (3-7 items), e.g. ["Security & Access", "Performance", "Data Model"].
-Use concise, professional titles.`;
-
-    const { parsed } = await callGemini<string[]>(prompt, (value) => {
-      if (!Array.isArray(value)) throw new Error("Expected array");
-      return value.filter((v): v is string => typeof v === "string").slice(0, 7);
-    });
-
-    return parsed;
   }
 
   private deriveClusterTitle(title: string, claim: string) {

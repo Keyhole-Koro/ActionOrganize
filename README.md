@@ -26,14 +26,18 @@ PUBSUB_TOPIC_NAME=mind-events \
 STATE_BACKEND=memory \
 PUBSUB_PUBLISH_ENABLED=false \
 LEASE_TTL_SECONDS=120 \
-VERTEX_USE_REAL_API=false \
+GOOGLE_API_KEY=your-api-key \
+GEMINI_MODEL_FAST=gemini-3-flash \
+GEMINI_MODEL_QUALITY=gemini-3-pro \
 npm run dev
 ```
 
-`VERTEX_USE_REAL_API=true` で起動する場合は、`GOOGLE_API_KEY` を必須で設定してください。
-必要に応じて `GEMINI_MODEL` を設定してください（既定値: `gemini-3-flash`）。
+モデルは用途別に設定します。
 
-例（Gemini 実 API）:
+* `GEMINI_MODEL_FAST`: A1 の正規化などレイテンシ重視の処理
+* `GEMINI_MODEL_QUALITY`: TopicResolver/A3/A6/A7 など品質重視の処理
+
+例（Firestore + Gemini 実 API）:
 
 ```bash
 PORT=8090 \
@@ -46,9 +50,9 @@ FIRESTORE_EMULATOR_HOST=localhost:8081 \
 STORAGE_EMULATOR_HOST=http://localhost:4443 \
 ORGANIZE_GCS_BUCKET=organize-local \
 LEASE_TTL_SECONDS=120 \
-VERTEX_USE_REAL_API=true \
 GOOGLE_API_KEY=your-api-key \
-GEMINI_MODEL=gemini-3-flash \
+GEMINI_MODEL_FAST=gemini-3-flash \
+GEMINI_MODEL_QUALITY=gemini-3-pro \
 npm run dev
 ```
 
@@ -106,11 +110,11 @@ Required:
 * `ORGANIZE_GCS_BUCKET`
 * `LEASE_TTL_SECONDS`
   * positive integer
-* `VERTEX_USE_REAL_API`
-  * `true` or `false`
-* `GOOGLE_API_KEY` (when `VERTEX_USE_REAL_API=true`)
-* `GEMINI_MODEL`
-  * default: `gemini-3-flash` (e.g. `gemini-3-pro`)
+* `GOOGLE_API_KEY`
+* `GEMINI_MODEL_FAST`
+  * e.g. `gemini-3-flash`
+* `GEMINI_MODEL_QUALITY`
+  * e.g. `gemini-3-pro`
 
 Optional:
 

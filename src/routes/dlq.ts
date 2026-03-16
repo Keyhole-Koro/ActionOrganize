@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { logger } from "../lib/logger.js";
 import { EventPublisher } from "../services/event-publisher.js";
+import { eventEnvelopeSchema } from "../models/envelope.js";
 import type { EventEnvelope } from "../models/envelope.js";
 
 export const dlqRouter = Router();
@@ -27,9 +28,9 @@ dlqRouter.post("/dlq/replay", async (req, res) => {
         const decoded = Buffer.from(body.message.data, "base64").toString("utf-8");
         let envelope: EventEnvelope;
         try {
-            envelope = JSON.parse(decoded) as EventEnvelope;
+            envelope = eventEnvelopeSchema.parse(JSON.parse(decoded));
         } catch {
-            res.status(400).json({ ok: false, error: "invalid envelope JSON" });
+            res.status(400).json({ ok: false, error: "invalid envelope" });
             return;
         }
 
