@@ -37,7 +37,7 @@ export class TopicResolverService {
   private readonly atomRepository = new AtomRepository();
 
   async resolve(envelope: EventEnvelope, inputId: string, atomIds: string[]): Promise<TopicResolution> {
-    const candidates = await this.topicRepository.listCandidates(envelope.workspaceId, 5);
+    const candidates = await this.topicRepository.listCandidates(envelope.workspaceId, 10);
     const atoms = await this.atomRepository.getByIds(envelope.workspaceId, envelope.topicId, atomIds);
     const queryText = [
       typeof envelope.payload.text === "string" ? envelope.payload.text : "",
@@ -59,71 +59,17 @@ export class TopicResolverService {
       scored.map(({ candidate }) => [candidate.topicId, candidate.status]),
     );
 
-    if (scored.length === 0) {
-      const resolution = this.resolveDeterministically(
-        envelope,
-        scored,
-        candidateTopicIds,
-        candidateTopicStates,
-      );
-      logger.info(
-        {
-          traceId: envelope.traceId,
-          workspaceId: envelope.workspaceId,
-          topicId: envelope.topicId,
-          inputId,
-          resolutionMode: resolution.resolutionMode,
-          resolutionConfidence: resolution.resolutionConfidence,
-          candidateTopicIds,
-          resolverMode: "deterministic",
-        },
-        "topic resolved",
-      );
-      return resolution;
-    }
-
-    // Short-circuit: when the top candidate has a clear high-confidence score,
-    // skip Gemini and resolve deterministically to avoid unnecessary API calls.
-    const topForShortCircuit = scored[0];
-    const secondForShortCircuit = scored[1];
-    const hasClearWinner =
-      topForShortCircuit.score >= ATTACH_THRESHOLD &&
-      (!secondForShortCircuit || topForShortCircuit.score - secondForShortCircuit.score >= SCORE_GAP_THRESHOLD);
-    if (hasClearWinner) {
-      const resolution = this.resolveDeterministically(
-        envelope,
-        scored,
-        candidateTopicIds,
-        candidateTopicStates,
-      );
-      logger.info(
-        {
-          traceId: envelope.traceId,
-          workspaceId: envelope.workspaceId,
-          topicId: envelope.topicId,
-          inputId,
-          resolutionMode: resolution.resolutionMode,
-          resolutionConfidence: resolution.resolutionConfidence,
-          candidateTopicIds,
-          resolverMode: "deterministic-short-circuit",
-        },
-        "topic resolved",
-      );
-      return resolution;
-    }
-
+    // Consultation with Gemini is mandatory. No deterministic short-circuits or fallbacks.
     const gemini = await this.resolveWithGemini(queryText, scored);
-    const top = scored[0];
-    const second = scored[1];
-    const candidatesCompete = Boolean(second && top.score - second.score < SCORE_GAP_THRESHOLD);
+
     const resolvedTopicInCandidates =
       typeof gemini.resolvedTopicId === "string" &&
       scored.some(({ candidate }) => candidate.topicId === gemini.resolvedTopicId);
+
     const canAttach =
       gemini.decision === "attach_existing" &&
       resolvedTopicInCandidates &&
-      gemini.confidence >= ATTACH_THRESHOLD &&
-      !candidatesCompete;
+      gemini.confidence >= 0.1; // Lower threshold for AI-driven attachment, relying on Gemini's judgment
 
     if (canAttach) {
       const selected = scored.find(({ candidate }) => candidate.topicId === gemini.resolvedTopicId);
@@ -156,13 +102,12 @@ export class TopicResolverService {
       }
     }
 
+    // Default to new topic if AI decides so or if attachment is invalid
     const resolution: TopicResolution = {
       resolvedTopicId: envelope.topicId,
       resolutionMode: "new",
-      resolutionConfidence: Math.max(0.35, gemini.confidence ?? top.score),
-      resolutionReason: candidatesCompete
-        ? "top candidates are too close, so creating a new topic is safer"
-        : gemini.reason,
+      resolutionConfidence: gemini.confidence,
+      resolutionReason: gemini.reason,
       topicLifecycleStateAtResolution: "active",
       candidateTopicIds,
       candidateTopicStates,
@@ -185,42 +130,6 @@ export class TopicResolverService {
     return resolution;
   }
 
-  private resolveDeterministically(
-    envelope: EventEnvelope,
-    scored: ScoredCandidate[],
-    candidateTopicIds: string[],
-    candidateTopicStates: Record<string, string>,
-  ): TopicResolution {
-    const top = scored[0];
-    const second = scored[1];
-    const hasClearWinner =
-      top &&
-      top.score >= ATTACH_THRESHOLD &&
-      (!second || top.score - second.score >= SCORE_GAP_THRESHOLD);
-
-    if (hasClearWinner) {
-      return {
-        resolvedTopicId: top.candidate.topicId,
-        resolutionMode: "existing",
-        resolutionConfidence: top.score,
-        resolutionReason: "center target and primary nodes align with existing topic",
-        topicLifecycleStateAtResolution: top.candidate.status,
-        candidateTopicIds,
-        candidateTopicStates,
-      };
-    }
-
-    return {
-      resolvedTopicId: envelope.topicId,
-      resolutionMode: "new",
-      resolutionConfidence: top ? Math.max(0.35, top.score) : 0.35,
-      resolutionReason: "candidates overlap weakly or compete, so a new topic is safer",
-      topicLifecycleStateAtResolution: "active",
-      candidateTopicIds,
-      candidateTopicStates,
-    };
-  }
-
   private async resolveWithGemini(queryText: string, scored: ScoredCandidate[]): Promise<GeminiResolution> {
     const { parsed } = await callGemini(
       this.buildGeminiPrompt(queryText, scored.slice(0, 5)),
@@ -235,20 +144,25 @@ export class TopicResolverService {
       topicId: candidate.topicId,
       title: candidate.title,
       status: candidate.status,
-      deterministicScore: Number(score.toFixed(4)),
+      heuristicOverlapScore: Number(score.toFixed(4)),
     }));
+
+    const candidatesSection = candidates.length > 0
+      ? `Candidates:\n${JSON.stringify(candidates, null, 2)}`
+      : "No existing candidates found in the current workspace.";
 
     return [
       "You are a topic resolver for a long-lived knowledge graph.",
-      "Choose whether to attach to an existing topic or create a new topic.",
+      "Analyze the query text and decide whether it should be attached to an existing topic or if it warrants a new topic.",
       "Return JSON only with keys: decision, resolvedTopicId, confidence, reason.",
-      "decision must be attach_existing or create_new.",
+      "decision must be 'attach_existing' or 'create_new'.",
       "confidence must be a number between 0 and 1.",
-      "When decision is attach_existing, resolvedTopicId MUST be one of the provided candidate topicIds.",
-      "If create_new, resolvedTopicId can be omitted.",
+      "If decision is 'attach_existing', resolvedTopicId MUST be one of the provided candidate topicIds.",
+      "If decision is 'create_new' or if there are no candidates, set decision to 'create_new' and omit resolvedTopicId (or set it to null).",
       "",
-      `queryText: ${queryText}`,
-      `candidates: ${JSON.stringify(candidates)}`,
+      `Query Text: ${queryText}`,
+      "",
+      candidatesSection,
     ].join("\n");
   }
 
