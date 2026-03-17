@@ -18,6 +18,18 @@ export interface GeminiResponse<T = unknown> {
     parsed: T;
 }
 
+export type GeminiMockHandler = (
+    prompt: string,
+    validate: (value: unknown) => any,
+    options: GeminiOptions,
+) => Promise<GeminiResponse<any>>;
+
+let mockHandler: GeminiMockHandler | null = null;
+
+export function setGeminiMockHandler(handler: GeminiMockHandler | null) {
+    mockHandler = handler;
+}
+
 const DEFAULT_TIMEOUT_MS = 10_000;
 
 /**
@@ -28,6 +40,10 @@ export async function callGemini<T = unknown>(
     validate: (value: unknown) => T,
     options: GeminiOptions,
 ): Promise<GeminiResponse<T>> {
+    if (mockHandler) {
+        return mockHandler(prompt, validate, options);
+    }
+
     const {
         timeoutMs = DEFAULT_TIMEOUT_MS,
         temperature = 0,
