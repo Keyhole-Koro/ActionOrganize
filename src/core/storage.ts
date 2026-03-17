@@ -42,3 +42,18 @@ async function bucketExistsViaEmulator(bucketName: string): Promise<boolean> {
   }
   return true;
 }
+
+export async function readMarkdown(path: string): Promise<string> {
+  const bucket = getStorage().bucket(env.ORGANIZE_GCS_BUCKET);
+  const file = bucket.file(path);
+  const [content] = await file.download();
+  return content.toString("utf-8");
+}
+
+export async function writeMarkdown(path: string, content: string): Promise<void> {
+  const bucket = getStorage().bucket(env.ORGANIZE_GCS_BUCKET);
+  const file = bucket.file(path);
+  await file.save(content, {
+    contentType: "text/markdown",
+  });
+}

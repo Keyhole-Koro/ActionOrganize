@@ -84,12 +84,17 @@ eventsRouter.post("/events", async (req, res) => {
       return;
     }
 
-    logger.error({ error }, "unexpected event processing failure");
+    logger.error({ 
+      error: error instanceof Error ? error.message : "unknown",
+      stack: error instanceof Error ? error.stack : undefined,
+      type: error instanceof Error ? error.constructor.name : typeof error
+    }, "unexpected event processing failure");
     res.status(503).json({
       ok: false,
       ack: false,
       retryable: true,
       stage: "PROCESS_AGENT",
+      error: error instanceof Error ? error.message : "unknown",
     });
   }
 });

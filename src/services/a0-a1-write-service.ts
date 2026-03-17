@@ -3,9 +3,9 @@ import { env } from "../config/env.js";
 import { InputRepository } from "../repositories/input-repository.js";
 import { InputProgressRepository } from "../repositories/input-progress-repository.js";
 import { AtomRepository } from "../repositories/atom-repository.js";
-import type { EventEnvelope } from "../models/envelope.js";
+import { readMarkdown, writeMarkdown } from "../core/storage.js";
+
 import { callGemini } from "../lib/gemini-client.js";
-import { writeMarkdown } from "../lib/gcs-writer.js";
 import { logger } from "../lib/logger.js";
 
 // ── Types ───────────────────────────────────────────────────────────────────
@@ -97,10 +97,25 @@ export class A0A1WriteService {
     });
 
     // ── Resolve source text ───────────────────────────────────────────────
-    if (typeof envelope.payload.text !== "string" || envelope.payload.text.trim().length === 0) {
-      throw new Error(`input.received payload.text is required but was missing or empty (inputId=${inputId})`);
+    let sourceText = typeof envelope.payload.text === "string" ? envelope.payload.text : "";
+
+    if (sourceText.trim().length === 0) {
+      // Fallback: try to read from GCS if payload is empty
+      try {
+        sourceText = await readMarkdown(`mind/inputs/${inputId}.md`);
+        logger.info({ inputId }, "A1: resolved source text from GCS");
+      } catch (error) {
+        throw new Error(
+          `input.received payload.text is missing and GCS fallback failed (inputId=${inputId}). Original error: ${
+            error instanceof Error ? error.message : "unknown"
+          }`,
+        );
+      }
     }
-    const sourceText = envelope.payload.text;
+
+    if (sourceText.trim().length === 0) {
+      throw new Error(`input.received source text is empty (inputId=${inputId})`);
+    }
 
     // ── Gemini-driven extraction and normalization ────────────────────────
     // We no longer use deterministic splitIntoClaims. 
