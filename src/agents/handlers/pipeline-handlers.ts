@@ -64,7 +64,11 @@ class MediaReceivedHandler implements AgentHandler {
           type: "input.received",
           topicId: envelope.topicId,
           idempotencyKey: `type:input.received/topicId:${envelope.topicId}/inputId:${inputId}`,
-          payload: { topicId: envelope.topicId, inputId },
+          payload: {
+            topicId: envelope.topicId,
+            inputId,
+            text: envelope.payload.text,
+          },
         },
       ],
     };
@@ -264,16 +268,20 @@ class BundleCreatedHandler implements AgentHandler {
             inputId,
           },
         },
-        ...reissuedAtomIds.map((atomId) => ({
-          type: "atom.reissued",
-          topicId: envelope.topicId,
-          idempotencyKey: `type:atom.reissued/topicId:${envelope.topicId}/atomId:${atomId}/bundleId:${bundleId}`,
-          payload: {
+        ...reissuedAtomIds.map((atomId) => {
+          const atom = atoms.find((a) => a.atomId === atomId);
+          return {
+            type: "atom.reissued",
             topicId: envelope.topicId,
-            atomId,
-            reason: "schema_incompatible_or_low_confidence",
-          },
-        })),
+            idempotencyKey: `type:atom.reissued/topicId:${envelope.topicId}/atomId:${atomId}/bundleId:${bundleId}`,
+            payload: {
+              topicId: envelope.topicId,
+              atomId,
+              claim: atom?.claim ?? "",
+              reason: "schema_incompatible_or_low_confidence",
+            },
+          };
+        }),
       ],
     };
   }
@@ -295,6 +303,7 @@ class AtomReissuedHandler implements AgentHandler {
 
   async handle({ envelope }: AgentContext): Promise<AgentResult> {
     const atomId = requireString(envelope.payload, "atomId");
+    const claim = requireString(envelope.payload, "claim");
     const reason = optionalString(envelope.payload, "reason") ?? "unknown";
 
     // Re-emit as input.received to re-process through A1 → TopicResolver
@@ -308,7 +317,7 @@ class AtomReissuedHandler implements AgentHandler {
           payload: {
             topicId: envelope.topicId,
             inputId: `reissue:${atomId}`,
-            text: typeof envelope.payload.claim === "string" ? envelope.payload.claim : "",
+            text: claim,
             contentType: "text/plain",
             reissueSource: atomId,
             reissueReason: reason,
