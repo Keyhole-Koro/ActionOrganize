@@ -362,6 +362,8 @@ Kind priority:
 4. opinion (subjective evaluation)
 5. fact (verifiable, default)
 
+Important: Generate all "title" and "claim" text in the same language as the Source Text.
+
 Source Text:
 ${sourceText}
 

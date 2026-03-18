@@ -819,6 +819,7 @@ Guidelines:
 1. Be specific. Avoid generic titles like "General Insights".
 2. Ensure every claim belongs to the most relevant subcluster.
 3. If a claim doesn't fit a specific subcluster, create a new one.
+4. Write all titles in the same language as the node content.
 
 Return a JSON object where each key is a nodeId and the value is an object with "clusterTitle" and "subclusterTitle".
 Return ONLY the JSON object.`;
