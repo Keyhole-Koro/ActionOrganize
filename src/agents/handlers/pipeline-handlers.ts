@@ -1,4 +1,5 @@
 import { InvalidEventError } from "../../core/errors.js";
+import { logger } from "../../lib/logger.js";
 import { A0A1WriteService } from "../../services/a0-a1-write-service.js";
 import { A2DraftAppenderService } from "../../services/a2-draft-appender-service.js";
 import { A5BalancerService } from "../../services/a5-balancer-service.js";
@@ -54,6 +55,7 @@ class MediaReceivedHandler implements AgentHandler {
 
   async handle({ envelope }: AgentContext): Promise<AgentResult> {
     const inputId = requireString(envelope.payload, "inputId");
+    logger.info({ inputId }, "A0: processing media received event");
 
     const extractedText = await writeService.onMediaReceived(envelope, inputId);
 

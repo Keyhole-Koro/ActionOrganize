@@ -118,6 +118,8 @@ export class A0A1WriteService {
       return [];
     }
 
+    logger.info({ inputId, eventType: envelope.type }, "A1: processing input received event");
+
     await this.inputProgressRepository.advance({
       workspaceId: envelope.workspaceId,
       topicId: envelope.topicId,
