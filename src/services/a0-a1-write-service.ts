@@ -71,9 +71,26 @@ export class A0A1WriteService {
           sourceText = raw.toString("utf-8");
           logger.info({ inputId, contentType }, "A0: read source text from GCS upload bucket");
         } else {
-          // Binary (PDF, image, etc.): delegate to Gemini for text extraction
-          sourceText = await this.extractTextFromFileWithGemini(rawRef, contentType);
-          logger.info({ inputId, contentType }, "A0: extracted source text via Gemini");
+          // Binary (PDF, image, etc.) or unknown (octet-stream):
+          // In local dev, Gemini cannot read from emulator GCS URIs.
+          // We first attempt to read as raw text regardless of content type.
+          try {
+            const raw = await readFromGcsUri(rawRef);
+            const possibleText = raw.toString("utf-8");
+            // Simple heuristic to check if it's actually text
+            if (possibleText.length > 0 && !/[\x00-\x08\x0B\x0C\x0E-\x1F]/.test(possibleText.slice(0, 512))) {
+              sourceText = possibleText;
+              logger.info({ inputId, contentType }, "A0: read as raw text (heuristic match)");
+            }
+          } catch (e) {
+            // ignore and proceed to Gemini
+          }
+
+          if (!sourceText) {
+            // delegate to Gemini for text extraction
+            sourceText = await this.extractTextFromFileWithGemini(rawRef, contentType);
+            logger.info({ inputId, contentType }, "A0: extracted source text via Gemini");
+          }
         }
       } catch (error) {
         logger.error({ error, inputId, rawRef }, "A0: failed to extract source text");
@@ -99,14 +116,25 @@ export class A0A1WriteService {
 
   private async extractTextFromFileWithGemini(fileUri: string, mimeType: string): Promise<string> {
     const prompt = "Extract all text content from this file and return it as plain text. Do not add any commentary, formatting, or JSON — just the raw text content.";
+    
+    let filePart: GeminiFilePart;
+    if (env.STORAGE_EMULATOR_HOST) {
+      // Local dev: download and send as inline data
+      const data = await readFromGcsUri(fileUri);
+      filePart = { data, mimeType };
+    } else {
+      // Production: send file URI
+      filePart = { fileUri, mimeType };
+    }
+
     const result = await callGemini(
       prompt,
       (v) => {
         if (typeof v === "string") return v;
         throw new Error("expected string");
       },
-      { modelTier: "fast", jsonMode: false, timeoutMs: 30_000 },
-      [{ fileUri, mimeType }],
+      { modelTier: "fast", jsonMode: false, timeoutMs: 60_000 },
+      [filePart],
     );
     return result.raw;
   }

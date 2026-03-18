@@ -57,23 +57,37 @@ class MediaReceivedHandler implements AgentHandler {
     const inputId = requireString(envelope.payload, "inputId");
     logger.info({ inputId }, "A0: processing media received event");
 
-    const extractedText = await writeService.onMediaReceived(envelope, inputId);
+    try {
+      const extractedText = await writeService.onMediaReceived(envelope, inputId);
 
-    return {
-      ack: true,
-      emittedEvents: [
-        {
-          type: "input.received",
-          topicId: envelope.topicId,
-          idempotencyKey: `type:input.received/topicId:${envelope.topicId}/inputId:${inputId}`,
-          payload: {
+      // If text extraction resulted in nothing, we don't proceed to A1.
+      // A0 might have failed to read from GCS or Gemini might have failed.
+      if (!extractedText || extractedText.trim().length === 0) {
+        logger.warn({ inputId }, "A0: no text extracted, skipping A1 event emission");
+        return { ack: true, emittedEvents: [] };
+      }
+
+      return {
+        ack: true,
+        emittedEvents: [
+          {
+            type: "input.received",
             topicId: envelope.topicId,
-            inputId,
-            text: extractedText || undefined,
+            idempotencyKey: `type:input.received/topicId:${envelope.topicId}/inputId:${inputId}`,
+            payload: {
+              topicId: envelope.topicId,
+              inputId,
+              text: extractedText,
+            },
           },
-        },
-      ],
-    };
+        ],
+      };
+    } catch (error) {
+      logger.error({ error, inputId }, "A0: failed during media received handling");
+      // We still ACK to prevent infinite retry of a broken media file,
+      // but we don't emit downstream events.
+      return { ack: true, emittedEvents: [] };
+    }
   }
 }
 

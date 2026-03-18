@@ -14,7 +14,8 @@ export interface GeminiOptions {
 }
 
 export interface GeminiFilePart {
-    fileUri: string;
+    fileUri?: string;
+    data?: Buffer; // Added raw data support
     mimeType: string;
 }
 
@@ -35,7 +36,7 @@ export function setGeminiMockHandler(handler: GeminiMockHandler | null) {
     mockHandler = handler;
 }
 
-const DEFAULT_TIMEOUT_MS = 10_000;
+const DEFAULT_TIMEOUT_MS = 30_000; // Increased default timeout for large files
 
 /**
  * Shared Gemini client for Organize pipeline agents.
@@ -64,7 +65,12 @@ export async function callGemini<T = unknown>(
     const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${env.GOOGLE_API_KEY}`;
 
     const parts: unknown[] = [
-        ...(fileParts ?? []).map((f) => ({ fileData: { fileUri: f.fileUri, mimeType: f.mimeType } })),
+        ...(fileParts ?? []).map((f) => {
+            if (f.data) {
+                return { inlineData: { data: f.data.toString("base64"), mimeType: f.mimeType } };
+            }
+            return { fileData: { fileUri: f.fileUri, mimeType: f.mimeType } };
+        }),
         { text: prompt },
     ];
 
@@ -91,7 +97,8 @@ export async function callGemini<T = unknown>(
         .finally(() => clearTimeout(timeout));
 
     if (!response.ok) {
-        throw new TemporaryDependencyError(`Gemini request failed with ${response.status}`);
+        const errorBody = await response.text();
+        throw new TemporaryDependencyError(`Gemini request failed with ${response.status}: ${errorBody}`);
     }
 
     const data = (await response.json()) as {
@@ -105,7 +112,11 @@ export async function callGemini<T = unknown>(
 
     let parsed: unknown;
     try {
-        parsed = JSON.parse(extractJson(text));
+        if (jsonMode) {
+            parsed = JSON.parse(extractJson(text));
+        } else {
+            parsed = text;
+        }
     } catch {
         throw new TemporaryDependencyError("Gemini response was not valid JSON");
     }
