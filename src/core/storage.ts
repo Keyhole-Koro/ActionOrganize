@@ -71,9 +71,20 @@ export async function readMarkdown(path: string): Promise<string> {
 export async function readFromGcsUri(uri: string): Promise<Buffer> {
   const match = uri.match(/^gs:\/\/([^/]+)\/(.+)$/);
   if (!match) throw new Error(`Invalid GCS URI: ${uri}`);
-  const [, bucketName, path] = match;
+  const [, bucketName, objectPath] = match;
+
+  // @google-cloud/storage v7 constructs download URLs as `${apiEndpoint}/b/${bucket}/o/${object}?alt=media`
+  // but fake-gcs-server only handles `/storage/v1/b/...` paths, so we use a direct fetch in emulator mode.
+  if (env.STORAGE_EMULATOR_HOST) {
+    const base = env.STORAGE_EMULATOR_HOST.replace(/\/$/, "");
+    const url = `${base}/storage/v1/b/${encodeURIComponent(bucketName)}/o/${encodeURIComponent(objectPath)}?alt=media`;
+    const res = await fetch(url);
+    if (!res.ok) throw new Error(`GCS download failed (${res.status}): ${uri}`);
+    return Buffer.from(await res.arrayBuffer());
+  }
+
   try {
-    const [content] = await getStorage().bucket(bucketName).file(path).download();
+    const [content] = await getStorage().bucket(bucketName).file(objectPath).download();
     return content;
   } catch (error) {
     throw new Error(`Failed to read from GCS URI: ${uri}. Error: ${error instanceof Error ? error.message : "unknown"}`);
