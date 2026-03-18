@@ -804,22 +804,23 @@ Return ONLY the JSON object, no other text.`;
       .map((c) => `- nodeId: "${c.nodeId}", title: "${c.atom.title}", claim: "${c.atom.claim}"`)
       .join("\n");
 
-    const prompt = `You are a knowledge graph architect. Organize the following list of nodes into a semantic hierarchy of clusters and subclusters.
+    const prompt = `You are a knowledge graph architect. Organize the following list of nodes into a deep, semantic hierarchy of clusters and subclusters.
 
 Topic: ${topicId}
 
 Nodes:
 ${nodeSummary}
 
+Goal: Group related nodes together into meaningful categories. 
+- "clusterTitle" is the high-level category (e.g., "Technical Infrastructure", "Strategic Goals").
+- "subclusterTitle" is a specific sub-topic within that category (e.g., "Database Migration", "User Growth Metrics").
+
+Guidelines:
+1. Be specific. Avoid generic titles like "General Insights".
+2. Ensure every claim belongs to the most relevant subcluster.
+3. If a claim doesn't fit a specific subcluster, create a new one.
+
 Return a JSON object where each key is a nodeId and the value is an object with "clusterTitle" and "subclusterTitle".
-Cluster and subcluster titles should be concise (2-4 words) and descriptive.
-
-Example output:
-{
-  "node:123": { "clusterTitle": "Security Controls", "subclusterTitle": "Authentication" },
-  "node:456": { "clusterTitle": "Data Architecture", "subclusterTitle": "Storage Optimization" }
-}
-
 Return ONLY the JSON object.`;
 
     const { parsed } = await callGemini<Record<string, { clusterTitle: string; subclusterTitle: string }>>(
@@ -853,8 +854,8 @@ Return ONLY the JSON object.`;
   }
 
   private buildHierarchyPlan(candidates: HierarchyCandidate[]): HierarchyPlan {
-    const MIN_CLAIMS_FOR_CLUSTER = 3;
-    const MIN_CLAIMS_FOR_SUBCLUSTER = 2;
+    const MIN_CLAIMS_FOR_CLUSTER = 2;
+    const MIN_CLAIMS_FOR_SUBCLUSTER = 1;
     const clusterMap = new Map<
       string,
       {

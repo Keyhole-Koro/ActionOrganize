@@ -30,42 +30,52 @@ export class NodeRepository {
   }
 
   write(tx: Transaction, record: NodeRecord) {
+    const data: any = {
+      topicId: record.topicId,
+      nodeId: record.nodeId,
+      kind: record.kind,
+      title: record.title,
+      schemaVersion: record.schemaVersion,
+      contextSummary: record.contextSummary,
+      detailHtml: record.detailHtml,
+      rollupRef: record.rollupRef,
+      rollupWatermark: record.rollupWatermark,
+      updatedAt: FieldValue.serverTimestamp(),
+      createdAt: FieldValue.serverTimestamp(),
+    };
+
+    if (record.parentId !== undefined) {
+      data.parentId = record.parentId;
+    }
+
     tx.set(
       this.docRef(record.workspaceId, record.topicId, record.nodeId),
-      {
-        topicId: record.topicId,
-        nodeId: record.nodeId,
-        kind: record.kind,
-        title: record.title,
-        parentId: record.parentId ?? null,
-        schemaVersion: record.schemaVersion,
-        contextSummary: record.contextSummary,
-        detailHtml: record.detailHtml,
-        rollupRef: record.rollupRef,
-        rollupWatermark: record.rollupWatermark,
-        updatedAt: FieldValue.serverTimestamp(),
-        createdAt: FieldValue.serverTimestamp(),
-      },
+      data,
       { merge: true },
     );
   }
 
   async upsert(record: NodeRecord) {
+    const data: any = {
+      topicId: record.topicId,
+      nodeId: record.nodeId,
+      kind: record.kind,
+      title: record.title,
+      schemaVersion: record.schemaVersion,
+      contextSummary: record.contextSummary,
+      detailHtml: record.detailHtml,
+      rollupRef: record.rollupRef,
+      rollupWatermark: record.rollupWatermark,
+      updatedAt: FieldValue.serverTimestamp(),
+      createdAt: FieldValue.serverTimestamp(),
+    };
+
+    if (record.parentId !== undefined) {
+      data.parentId = record.parentId;
+    }
+
     await this.docRef(record.workspaceId, record.topicId, record.nodeId).set(
-      {
-        topicId: record.topicId,
-        nodeId: record.nodeId,
-        kind: record.kind,
-        title: record.title,
-        parentId: record.parentId ?? null,
-        schemaVersion: record.schemaVersion,
-        contextSummary: record.contextSummary,
-        detailHtml: record.detailHtml,
-        rollupRef: record.rollupRef,
-        rollupWatermark: record.rollupWatermark,
-        updatedAt: FieldValue.serverTimestamp(),
-        createdAt: FieldValue.serverTimestamp(),
-      },
+      data,
       { merge: true },
     );
   }
