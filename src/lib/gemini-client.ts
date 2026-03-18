@@ -3,7 +3,7 @@ import { TemporaryDependencyError } from "../core/errors.js";
 import { logger } from "./logger.js";
 
 export interface GeminiOptions {
-    /** Timeout in ms. Defaults to 10000. */
+    /** Timeout in ms. Defaults to DEFAULT_TIMEOUT_MS (5 min). */
     timeoutMs?: number;
     /** Temperature. Defaults to 0. */
     temperature?: number;
@@ -36,7 +36,18 @@ export function setGeminiMockHandler(handler: GeminiMockHandler | null) {
     mockHandler = handler;
 }
 
-const DEFAULT_TIMEOUT_MS = 30_000; // Increased default timeout for large files
+const DEFAULT_TIMEOUT_MS = 300_000; // 5 minutes default to match Gemini API latency
+
+// Circuit breaker: after a quality-model 429, use fast model for QUALITY_FALLBACK_DURATION_MS
+const QUALITY_FALLBACK_DURATION_MS = 60 * 60 * 1000; // 1 hour
+let qualityModelExhaustedAt: number | null = null;
+
+function isQualityModelCircuitOpen(): boolean {
+    if (qualityModelExhaustedAt === null) return false;
+    if (Date.now() - qualityModelExhaustedAt < QUALITY_FALLBACK_DURATION_MS) return true;
+    qualityModelExhaustedAt = null; // reset after 1 hour
+    return false;
+}
 
 /**
  * Shared Gemini client for Organize pipeline agents.
@@ -58,10 +69,16 @@ export async function callGemini<T = unknown>(
         modelTier,
     } = options;
 
+    // Circuit breaker: if quality model was quota-exhausted recently, use fast model directly
+    const effectiveTier = (modelTier === "quality" && isQualityModelCircuitOpen()) ? "fast" : modelTier;
+    if (effectiveTier !== modelTier) {
+        logger.info("quality model circuit open, using fast model directly");
+    }
+
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), timeoutMs);
 
-    const model = modelTier === "quality" ? env.GEMINI_MODEL_QUALITY : env.GEMINI_MODEL_FAST;
+    const model = effectiveTier === "quality" ? env.GEMINI_MODEL_QUALITY : env.GEMINI_MODEL_FAST;
     const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${env.GOOGLE_API_KEY}`;
 
     const parts: unknown[] = [
@@ -98,6 +115,12 @@ export async function callGemini<T = unknown>(
 
     if (!response.ok) {
         const errorBody = await response.text();
+        // Fallback: if quality model is quota-exhausted (429), open circuit and retry with fast model
+        if (response.status === 429 && effectiveTier === "quality") {
+            qualityModelExhaustedAt = Date.now();
+            logger.warn({ model }, "quality model quota exhausted (429), opening circuit breaker for 1h, falling back to fast model");
+            return callGemini(prompt, validate, { ...options, modelTier: "fast" }, fileParts);
+        }
         throw new TemporaryDependencyError(`Gemini request failed with ${response.status}: ${errorBody}`);
     }
 

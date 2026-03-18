@@ -1,6 +1,6 @@
 import { FieldValue, Timestamp } from "@google-cloud/firestore";
 import { env } from "../config/env.js";
-import { TemporaryDependencyError } from "../core/errors.js";
+import { EventInProgressError } from "../core/errors.js";
 import { getFirestore } from "../core/firestore.js";
 import type { LeasePort } from "./contracts.js";
 
@@ -21,7 +21,7 @@ export class LeaseRepository implements LeasePort {
       if (snapshot.exists) {
         const expiresAt = snapshot.get("expiresAt");
         if (expiresAt instanceof Timestamp && expiresAt.toMillis() > now.toMillis()) {
-          throw new TemporaryDependencyError(`lease busy for ${resourceKey}`);
+          throw new EventInProgressError(`lease busy for ${resourceKey}`);
         }
       }
 

@@ -43,3 +43,11 @@ export class DuplicateEventError extends AppError {
     this.name = "DuplicateEventError";
   }
 }
+
+/** Event is already being processed by another handler. ACK the duplicate (200) to stop Pub/Sub retry storm. */
+export class EventInProgressError extends AppError {
+  constructor(message: string) {
+    super(message, { statusCode: 200, retryable: false, stage: "PROCESS_AGENT" });
+    this.name = "EventInProgressError";
+  }
+}

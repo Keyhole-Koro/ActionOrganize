@@ -133,7 +133,7 @@ export class A0A1WriteService {
         if (typeof v === "string") return v;
         throw new Error("expected string");
       },
-      { modelTier: "fast", jsonMode: false, timeoutMs: 60_000 },
+      { modelTier: "fast", jsonMode: false },
       [filePart],
     );
     return result.raw;

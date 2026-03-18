@@ -18,7 +18,6 @@ export type TopicResolution = {
 
 const ATTACH_THRESHOLD = 0.8;
 const SCORE_GAP_THRESHOLD = 0.15;
-const GEMINI_TIMEOUT_MS = 7000;
 
 type ScoredCandidate = {
   candidate: TopicCandidate;
@@ -134,7 +133,7 @@ export class TopicResolverService {
     const { parsed } = await callGemini(
       this.buildGeminiPrompt(queryText, scored.slice(0, 5)),
       (value) => this.validateGeminiResolution(value),
-      { timeoutMs: GEMINI_TIMEOUT_MS, modelTier: "quality" },
+      { modelTier: "quality" },
     );
     return parsed;
   }
@@ -185,13 +184,14 @@ export class TopicResolverService {
     if (typeof reason !== "string" || reason.length === 0) {
       throw new TemporaryDependencyError("topic resolver Gemini reason was invalid");
     }
-    if (resolvedTopicId !== undefined && (typeof resolvedTopicId !== "string" || resolvedTopicId.length === 0)) {
+    const normalizedTopicId = resolvedTopicId === null ? undefined : resolvedTopicId;
+    if (normalizedTopicId !== undefined && (typeof normalizedTopicId !== "string" || normalizedTopicId.length === 0)) {
       throw new TemporaryDependencyError("topic resolver Gemini resolvedTopicId was invalid");
     }
 
     return {
       decision,
-      resolvedTopicId: resolvedTopicId as string | undefined,
+      resolvedTopicId: normalizedTopicId as string | undefined,
       confidence,
       reason,
     };

@@ -1,5 +1,5 @@
 import { env } from "../config/env.js";
-import { TemporaryDependencyError } from "../core/errors.js";
+import { EventInProgressError } from "../core/errors.js";
 import type { LeasePort } from "./contracts.js";
 
 type LeaseState = {
@@ -19,7 +19,7 @@ export class MemoryLeaseRepository implements LeasePort {
     const now = Date.now();
     const current = leases.get(key);
     if (current && current.expiresAt > now) {
-      throw new TemporaryDependencyError(`lease busy for ${resourceKey}`);
+      throw new EventInProgressError(`lease busy for ${resourceKey}`);
     }
     leases.set(key, {
       owner,
