@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { ZodError } from "zod";
-import { AppError, DuplicateEventError, InvalidEventError } from "../core/errors.js";
+import { AppError, DuplicateEventError, EventInProgressError, InvalidEventError } from "../core/errors.js";
 import { decodePushEvent } from "../core/pubsub.js";
 import { logger } from "../lib/logger.js";
 import { EventProcessor } from "../services/event-processor.js";
@@ -67,7 +67,8 @@ eventsRouter.post("/events", async (req, res) => {
     }
 
     if (error instanceof AppError) {
-      logger.error(
+      const logFn = error instanceof EventInProgressError ? logger.warn.bind(logger) : logger.error.bind(logger);
+      logFn(
         {
           error: error.message,
           retryable: error.retryable,
