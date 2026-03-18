@@ -13,6 +13,11 @@ export interface GeminiOptions {
     modelTier: "fast" | "quality";
 }
 
+export interface GeminiFilePart {
+    fileUri: string;
+    mimeType: string;
+}
+
 export interface GeminiResponse<T = unknown> {
     raw: string;
     parsed: T;
@@ -39,6 +44,7 @@ export async function callGemini<T = unknown>(
     prompt: string,
     validate: (value: unknown) => T,
     options: GeminiOptions,
+    fileParts?: GeminiFilePart[],
 ): Promise<GeminiResponse<T>> {
     if (mockHandler) {
         return mockHandler(prompt, validate, options);
@@ -57,11 +63,16 @@ export async function callGemini<T = unknown>(
     const model = modelTier === "quality" ? env.GEMINI_MODEL_QUALITY : env.GEMINI_MODEL_FAST;
     const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${env.GOOGLE_API_KEY}`;
 
+    const parts: unknown[] = [
+        ...(fileParts ?? []).map((f) => ({ fileData: { fileUri: f.fileUri, mimeType: f.mimeType } })),
+        { text: prompt },
+    ];
+
     const response = await fetch(url, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
-            contents: [{ role: "user", parts: [{ text: prompt }] }],
+            contents: [{ role: "user", parts }],
             generationConfig: {
                 temperature,
                 ...(jsonMode ? { responseMimeType: "application/json" } : {}),

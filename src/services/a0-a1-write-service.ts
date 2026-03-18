@@ -3,7 +3,7 @@ import { env } from "../config/env.js";
 import { InputRepository } from "../repositories/input-repository.js";
 import { InputProgressRepository } from "../repositories/input-progress-repository.js";
 import { AtomRepository } from "../repositories/atom-repository.js";
-import { readMarkdown, writeMarkdown } from "../core/storage.js";
+import { readFromGcsUri, readMarkdown, writeMarkdown } from "../core/storage.js";
 
 import { callGemini } from "../lib/gemini-client.js";
 import { logger } from "../lib/logger.js";
@@ -42,30 +42,46 @@ export class A0A1WriteService {
 
   // ── A0 MediaReceived ────────────────────────────────────────────────────
 
-  async onMediaReceived(envelope: EventEnvelope, inputId: string) {
+  async onMediaReceived(envelope: EventEnvelope, inputId: string): Promise<string> {
     if (!this.isFirestoreBackend()) {
-      return;
+      return "";
     }
+
+    const contentType =
+      typeof envelope.payload.contentType === "string" ? envelope.payload.contentType : "text/plain";
+    const rawRef =
+      typeof envelope.payload.rawRef === "string" ? envelope.payload.rawRef : undefined;
 
     await this.inputRepository.upsert({
       workspaceId: envelope.workspaceId,
       topicId: envelope.topicId,
       inputId,
       status: "received",
-      contentType:
-        typeof envelope.payload.contentType === "string" ? envelope.payload.contentType : "text/plain",
-      rawRef: typeof envelope.payload.rawRef === "string" ? envelope.payload.rawRef : undefined,
+      contentType,
+      rawRef,
     });
 
-    // Write extracted text to GCS
-    const extractedText =
-      typeof envelope.payload.text === "string" ? envelope.payload.text : "";
-    if (extractedText.length > 0) {
+    // Extract text from the uploaded raw file
+    let sourceText = "";
+    if (rawRef) {
       try {
-        await writeMarkdown(`mind/inputs/${inputId}.md`, extractedText);
+        if (contentType.startsWith("text/")) {
+          // Plain text: read bytes directly from upload bucket
+          const raw = await readFromGcsUri(rawRef);
+          sourceText = raw.toString("utf-8");
+          logger.info({ inputId, contentType }, "A0: read source text from GCS upload bucket");
+        } else {
+          // Binary (PDF, image, etc.): delegate to Gemini for text extraction
+          sourceText = await this.extractTextFromFileWithGemini(rawRef, contentType);
+          logger.info({ inputId, contentType }, "A0: extracted source text via Gemini");
+        }
       } catch (error) {
-        logger.warn({ error, inputId }, "failed to write input to GCS, continuing");
+        logger.error({ error, inputId, rawRef }, "A0: failed to extract source text");
       }
+    }
+
+    if (sourceText.trim().length > 0) {
+      await writeMarkdown(`mind/inputs/${inputId}.md`, sourceText);
     }
 
     await this.inputProgressRepository.advance({
@@ -77,6 +93,22 @@ export class A0A1WriteService {
       lastEventType: envelope.type,
       traceId: envelope.traceId,
     });
+
+    return sourceText;
+  }
+
+  private async extractTextFromFileWithGemini(fileUri: string, mimeType: string): Promise<string> {
+    const prompt = "Extract all text content from this file and return it as plain text. Do not add any commentary, formatting, or JSON — just the raw text content.";
+    const result = await callGemini(
+      prompt,
+      (v) => {
+        if (typeof v === "string") return v;
+        throw new Error("expected string");
+      },
+      { modelTier: "fast", jsonMode: false, timeoutMs: 30_000 },
+      [{ fileUri, mimeType }],
+    );
+    return result.raw;
   }
 
   // ── A1 InputReceived (Gemini-driven atom extraction) ───────────────────

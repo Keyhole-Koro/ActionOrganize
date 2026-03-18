@@ -50,6 +50,15 @@ export async function readMarkdown(path: string): Promise<string> {
   return content.toString("utf-8");
 }
 
+/** Read raw bytes from any gs://bucket/path URI. */
+export async function readFromGcsUri(uri: string): Promise<Buffer> {
+  const match = uri.match(/^gs:\/\/([^/]+)\/(.+)$/);
+  if (!match) throw new Error(`Invalid GCS URI: ${uri}`);
+  const [, bucketName, path] = match;
+  const [content] = await getStorage().bucket(bucketName).file(path).download();
+  return content;
+}
+
 export async function writeMarkdown(path: string, content: string): Promise<void> {
   const bucket = getStorage().bucket(env.ORGANIZE_GCS_BUCKET);
   const file = bucket.file(path);

@@ -55,7 +55,7 @@ class MediaReceivedHandler implements AgentHandler {
   async handle({ envelope }: AgentContext): Promise<AgentResult> {
     const inputId = requireString(envelope.payload, "inputId");
 
-    await writeService.onMediaReceived(envelope, inputId);
+    const extractedText = await writeService.onMediaReceived(envelope, inputId);
 
     return {
       ack: true,
@@ -67,7 +67,7 @@ class MediaReceivedHandler implements AgentHandler {
           payload: {
             topicId: envelope.topicId,
             inputId,
-            text: envelope.payload.text,
+            text: extractedText || undefined,
           },
         },
       ],
@@ -268,20 +268,17 @@ class BundleCreatedHandler implements AgentHandler {
             inputId,
           },
         },
-        ...reissuedAtomIds.map((atomId) => {
-          const atom = atoms.find((a) => a.atomId === atomId);
-          return {
-            type: "atom.reissued",
+        ...reissuedAtomIds.map((atomId) => ({
+          type: "atom.reissued",
+          topicId: envelope.topicId,
+          idempotencyKey: `type:atom.reissued/topicId:${envelope.topicId}/atomId:${atomId}/bundleId:${bundleId}`,
+          payload: {
             topicId: envelope.topicId,
-            idempotencyKey: `type:atom.reissued/topicId:${envelope.topicId}/atomId:${atomId}/bundleId:${bundleId}`,
-            payload: {
-              topicId: envelope.topicId,
-              atomId,
-              claim: atom?.claim ?? "",
-              reason: "schema_incompatible_or_low_confidence",
-            },
-          };
-        }),
+            atomId,
+            claim: "",
+            reason: "schema_incompatible_or_low_confidence",
+          },
+        })),
       ],
     };
   }
