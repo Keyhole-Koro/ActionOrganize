@@ -14,6 +14,7 @@ import { EdgeRepository } from "../repositories/edge-repository.js";
 import { AtomRepository } from "../repositories/atom-repository.js";
 import { dedupeNodeIds, resolveNodeAsync } from "./cleaner-entity-resolution.js";
 import { EvidenceRepository } from "../repositories/evidence-repository.js";
+import { WorkspaceRepository } from "../repositories/workspace-repository.js";
 import { callGemini } from "../lib/gemini-client.js";
 import { logger } from "../lib/logger.js";
 
@@ -77,6 +78,7 @@ export class PipelineWriteService {
   private readonly edgeRepository = new EdgeRepository();
   private readonly atomRepository = new AtomRepository();
   private readonly evidenceRepository = new EvidenceRepository();
+  private readonly workspaceRepository = new WorkspaceRepository();
 
   private isFirestoreBackend() {
     return env.STATE_BACKEND === "firestore";
@@ -329,6 +331,10 @@ export class PipelineWriteService {
           schemaVersion,
           contextSummary: `Cluster for outline v${nextOutlineVersion}`,
         });
+        this.workspaceRepository.writeMetadata(tx, {
+          workspaceId: envelope.workspaceId,
+          nodeCountIncrement: 1,
+        });
         this.edgeRepository.write(tx, {
           workspaceId: envelope.workspaceId,
           topicId: envelope.topicId,
@@ -350,6 +356,10 @@ export class PipelineWriteService {
             schemaVersion,
             contextSummary: `Subcluster for outline v${nextOutlineVersion}`,
           });
+          this.workspaceRepository.writeMetadata(tx, {
+            workspaceId: envelope.workspaceId,
+            nodeCountIncrement: 1,
+          });
           this.edgeRepository.write(tx, {
             workspaceId: envelope.workspaceId,
             topicId: envelope.topicId,
@@ -365,6 +375,10 @@ export class PipelineWriteService {
       for (const candidate of resolvedCandidates) {
         const parentId = claimPlacementByNodeId.get(candidate.nodeId) ?? rootNodeId;
         const atomNodeId = candidate.nodeId;
+        const contextSummary = candidate.isMerged
+          ? `Merged from bundle ${bundleId} (score=${candidate.similarity.toFixed(2)}): ${candidate.atom.claim}`
+          : candidate.atom.claim;
+
         this.nodeRepository.write(tx, {
           workspaceId: envelope.workspaceId,
           topicId: envelope.topicId,
@@ -373,10 +387,21 @@ export class PipelineWriteService {
           title: candidate.atom.title,
           parentId,
           schemaVersion,
-          contextSummary: candidate.isMerged
-            ? `Merged from bundle ${bundleId} (score=${candidate.similarity.toFixed(2)}): ${candidate.atom.claim}`
-            : candidate.atom.claim,
+          contextSummary,
         });
+
+        if (!candidate.isMerged) {
+          this.workspaceRepository.writeMetadata(tx, {
+            workspaceId: envelope.workspaceId,
+            nodeCountIncrement: 1,
+            latestNodeSummary: `${candidate.atom.title}: ${candidate.atom.claim}`,
+          });
+        } else {
+          this.workspaceRepository.writeMetadata(tx, {
+            workspaceId: envelope.workspaceId,
+            latestNodeSummary: `(Updated) ${candidate.atom.title}: ${candidate.atom.claim}`,
+          });
+        }
         this.edgeRepository.write(tx, {
           workspaceId: envelope.workspaceId,
           topicId: envelope.topicId,
