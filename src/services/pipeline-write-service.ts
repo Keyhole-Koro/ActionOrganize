@@ -201,7 +201,7 @@ export class PipelineWriteService {
     );
 
     // AI-driven semantic clustering for the entire bundle.
-    const hierarchyMap = await this.planHierarchyWithGemini(envelope.topicId, resolvedCandidates);
+    const { topicTitle, map: hierarchyMap } = await this.planHierarchyWithGemini(envelope.topicId, resolvedCandidates);
 
     const hierarchyCandidates = resolvedCandidates.map((item) => {
       const { clusterTitle, subclusterTitle } = hierarchyMap.get(item.nodeId) || {
@@ -277,6 +277,7 @@ export class PipelineWriteService {
         {
           workspaceId: envelope.workspaceId,
           topicId: envelope.topicId,
+          title: topicTitle,
           latestOutlineVersion: nextOutlineVersion,
           latestOutlineRef: outlineRef,
           updatedAt: FieldValue.serverTimestamp(),
@@ -311,7 +312,7 @@ export class PipelineWriteService {
         topicId: envelope.topicId,
         nodeId: rootNodeId,
         kind: "topic",
-        title: `Topic ${envelope.topicId}`,
+        title: topicTitle,
         parentId: null,
         schemaVersion,
         contextSummary: `Outline v${nextOutlineVersion} generated from ${bundleId}`,
@@ -508,7 +509,6 @@ Return ONLY the JSON object.`;
         try {
           evidenceCount = await this.evidenceRepository.countByNode(
             envelope.workspaceId,
-            envelope.topicId,
             nodeId,
           );
         } catch (e) {
@@ -797,8 +797,8 @@ Return ONLY the JSON object, no other text.`;
   private async planHierarchyWithGemini(
     topicId: string,
     candidates: Array<{ atom: { title: string; claim: string }; nodeId: string }>,
-  ): Promise<Map<string, { clusterTitle: string; subclusterTitle: string }>> {
-    if (candidates.length === 0) return new Map();
+  ): Promise<{ topicTitle: string; map: Map<string, { clusterTitle: string; subclusterTitle: string }> }> {
+    if (candidates.length === 0) return { topicTitle: topicId, map: new Map() };
 
     const nodeSummary = candidates
       .map((c) => `- nodeId: "${c.nodeId}", title: "${c.atom.title}", claim: "${c.atom.claim}"`)
@@ -806,12 +806,11 @@ Return ONLY the JSON object, no other text.`;
 
     const prompt = `You are a knowledge graph architect. Organize the following list of nodes into a deep, semantic hierarchy of clusters and subclusters.
 
-Topic: ${topicId}
-
 Nodes:
 ${nodeSummary}
 
-Goal: Group related nodes together into meaningful categories. 
+Goal: Group related nodes together into meaningful categories.
+- "topicTitle" is a concise natural-language title (≤60 chars) that summarizes the overall theme of ALL the nodes above.
 - "clusterTitle" is the high-level category (e.g., "Technical Infrastructure", "Strategic Goals").
 - "subclusterTitle" is a specific sub-topic within that category (e.g., "Database Migration", "User Growth Metrics").
 
@@ -821,28 +820,38 @@ Guidelines:
 3. If a claim doesn't fit a specific subcluster, create a new one.
 4. Write all titles in the same language as the node content.
 
-Return a JSON object where each key is a nodeId and the value is an object with "clusterTitle" and "subclusterTitle".
+Return a JSON object with:
+- "topicTitle": string — the overall topic title
+- "nodes": object where each key is a nodeId and the value is an object with "clusterTitle" and "subclusterTitle"
 Return ONLY the JSON object.`;
 
-    const { parsed } = await callGemini<Record<string, { clusterTitle: string; subclusterTitle: string }>>(
+    type GeminiResult = { topicTitle: string; nodes: Record<string, { clusterTitle: string; subclusterTitle: string }> };
+    const { parsed } = await callGemini<GeminiResult>(
       prompt,
       (value) => {
         if (typeof value !== "object" || value === null) {
           throw new Error("Gemini hierarchy plan: invalid response shape");
         }
-        return value as Record<string, { clusterTitle: string; subclusterTitle: string }>;
+        const v = value as Record<string, unknown>;
+        if (typeof v.topicTitle !== "string" || v.topicTitle.length === 0) {
+          throw new Error("Gemini hierarchy plan: missing topicTitle");
+        }
+        if (typeof v.nodes !== "object" || v.nodes === null) {
+          throw new Error("Gemini hierarchy plan: missing nodes");
+        }
+        return value as GeminiResult;
       },
       { modelTier: "quality" },
     );
 
-    const result = new Map<string, { clusterTitle: string; subclusterTitle: string }>();
-    for (const [nodeId, titles] of Object.entries(parsed)) {
-      result.set(nodeId, {
+    const map = new Map<string, { clusterTitle: string; subclusterTitle: string }>();
+    for (const [nodeId, titles] of Object.entries(parsed.nodes)) {
+      map.set(nodeId, {
         clusterTitle: titles.clusterTitle || "General Insights",
         subclusterTitle: titles.subclusterTitle || "Captured Claims",
       });
     }
-    return result;
+    return { topicTitle: parsed.topicTitle, map };
   }
 
   private toStableSlug(value: string) {

@@ -26,12 +26,13 @@ export class NodeRepository {
   private readonly firestore = getFirestore();
 
   docRef(workspaceId: string, topicId: string, nodeId: string) {
-    return this.firestore.doc(`workspaces/${workspaceId}/topics/${topicId}/nodes/${nodeId}`);
+    return this.firestore.doc(`workspaces/${workspaceId}/nodes/${nodeId}`);
   }
 
   write(tx: Transaction, record: NodeRecord) {
     const data: any = {
       topicId: record.topicId,
+      workspaceId: record.workspaceId,
       nodeId: record.nodeId,
       kind: record.kind,
       title: record.title,
@@ -58,6 +59,7 @@ export class NodeRepository {
   async upsert(record: NodeRecord) {
     const data: any = {
       topicId: record.topicId,
+      workspaceId: record.workspaceId,
       nodeId: record.nodeId,
       kind: record.kind,
       title: record.title,
@@ -82,7 +84,7 @@ export class NodeRepository {
 
   async listClaimNodes(workspaceId: string, topicId: string, limit = 500): Promise<NodeCandidate[]> {
     const snapshot = await this.firestore
-      .collection(`workspaces/${workspaceId}/topics/${topicId}/nodes`)
+      .collection(`workspaces/${workspaceId}/nodes`)
       .where("kind", "==", "claim")
       .limit(limit)
       .get();
@@ -98,7 +100,7 @@ export class NodeRepository {
 
   async listByParent(workspaceId: string, topicId: string, parentId: string, limit = 200): Promise<NodeCandidate[]> {
     const snapshot = await this.firestore
-      .collection(`workspaces/${workspaceId}/topics/${topicId}/nodes`)
+      .collection(`workspaces/${workspaceId}/nodes`)
       .where("parentId", "==", parentId)
       .limit(limit)
       .get();

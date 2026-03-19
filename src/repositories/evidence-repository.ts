@@ -17,14 +17,14 @@ export type EvidenceRecord = {
 export class EvidenceRepository {
     private readonly firestore = getFirestore();
 
-    docRef(workspaceId: string, topicId: string, nodeId: string, evidenceId: string) {
+    docRef(workspaceId: string, nodeId: string, evidenceId: string) {
         return this.firestore.doc(
-            `workspaces/${workspaceId}/topics/${topicId}/nodes/${nodeId}/evidence/${evidenceId}`,
+            `workspaces/${workspaceId}/nodes/${nodeId}/evidence/${evidenceId}`,
         );
     }
 
     async upsert(record: EvidenceRecord) {
-        await this.docRef(record.workspaceId, record.topicId, record.nodeId, record.evidenceId).set(
+        await this.docRef(record.workspaceId, record.nodeId, record.evidenceId).set(
             {
                 topicId: record.topicId,
                 nodeId: record.nodeId,
@@ -42,10 +42,10 @@ export class EvidenceRepository {
         );
     }
 
-    async countByNode(workspaceId: string, topicId: string, nodeId: string): Promise<number> {
+    async countByNode(workspaceId: string, nodeId: string): Promise<number> {
         const snapshot = await this.firestore
             .collection(
-                `workspaces/${workspaceId}/topics/${topicId}/nodes/${nodeId}/evidence`,
+                `workspaces/${workspaceId}/nodes/${nodeId}/evidence`,
             )
             .count()
             .get();

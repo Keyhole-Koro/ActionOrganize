@@ -17,12 +17,12 @@ export type OrganizeOpRecord = {
 export class OrganizeOpRepository {
   private readonly firestore = getFirestore();
 
-  docRef(workspaceId: string, topicId: string, opId: string) {
-    return this.firestore.doc(`workspaces/${workspaceId}/topics/${topicId}/organizeOps/${opId}`);
+  docRef(workspaceId: string, opId: string) {
+    return this.firestore.doc(`workspaces/${workspaceId}/organizeOps/${opId}`);
   }
 
   async upsert(record: OrganizeOpRecord) {
-    await this.docRef(record.workspaceId, record.topicId, record.opId).set(
+    await this.docRef(record.workspaceId, record.opId).set(
       {
         opType: record.opType,
         sourceEventType: record.sourceEventType,
