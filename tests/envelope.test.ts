@@ -93,6 +93,10 @@ describe("pubsubAttributesSchema", () => {
             bundleId: "b1",
             draftVersion: "v1",
             outlineVersion: "v2",
+            batchId: "batch-1",
+            conversationId: "conv-1",
+            threadId: "thread-1",
+            chunkId: "chunk-1",
         });
         expect(result.success).toBe(true);
     });

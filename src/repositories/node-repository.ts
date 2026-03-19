@@ -13,6 +13,10 @@ export type NodeRecord = {
   detailHtml?: string;
   rollupRef?: string;
   rollupWatermark?: number;
+  sourceInputIds?: string[];
+  sourceChunkIds?: string[];
+  sourceThreadIds?: string[];
+  evidenceAtomIds?: string[];
 };
 
 export type NodeCandidate = {
@@ -41,6 +45,10 @@ export class NodeRepository {
       detailHtml: record.detailHtml,
       rollupRef: record.rollupRef,
       rollupWatermark: record.rollupWatermark,
+      sourceInputIds: record.sourceInputIds,
+      sourceChunkIds: record.sourceChunkIds,
+      sourceThreadIds: record.sourceThreadIds,
+      evidenceAtomIds: record.evidenceAtomIds,
       updatedAt: FieldValue.serverTimestamp(),
       createdAt: FieldValue.serverTimestamp(),
     };
@@ -68,6 +76,10 @@ export class NodeRepository {
       detailHtml: record.detailHtml,
       rollupRef: record.rollupRef,
       rollupWatermark: record.rollupWatermark,
+      sourceInputIds: record.sourceInputIds,
+      sourceChunkIds: record.sourceChunkIds,
+      sourceThreadIds: record.sourceThreadIds,
+      evidenceAtomIds: record.evidenceAtomIds,
       updatedAt: FieldValue.serverTimestamp(),
       createdAt: FieldValue.serverTimestamp(),
     };

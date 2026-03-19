@@ -5,6 +5,8 @@ import { A2DraftAppenderService } from "../../services/a2-draft-appender-service
 import { A5BalancerService } from "../../services/a5-balancer-service.js";
 import { PipelineWriteService } from "../../services/pipeline-write-service.js";
 import { TopicResolverService } from "../../services/topic-resolver-service.js";
+import { organizeChunkJobSchema } from "../../models/organize-ingest-job.js";
+import { OrganizeReviewRepository } from "../../repositories/organize-review-repository.js";
 import type { AgentContext, AgentHandler, AgentResult } from "../types.js";
 
 type Payload = Record<string, unknown>;
@@ -49,6 +51,49 @@ const draftAppenderService = new A2DraftAppenderService();
 const a5BalancerService = new A5BalancerService();
 const pipelineWriteService = new PipelineWriteService();
 const topicResolverService = new TopicResolverService();
+const organizeReviewRepository = new OrganizeReviewRepository();
+
+class OrganizeIngestReceivedHandler implements AgentHandler {
+  readonly eventType = "organize.ingest.received";
+
+  async handle({ envelope }: AgentContext): Promise<AgentResult> {
+    const parsed = organizeChunkJobSchema.safeParse(envelope.payload);
+    if (!parsed.success) {
+      throw new InvalidEventError("payload must satisfy OrganizeChunkJob");
+    }
+
+    const job = parsed.data;
+    await writeService.onOrganizeIngestReceived(envelope, job);
+
+    return {
+      ack: true,
+      emittedEvents: [
+        {
+          type: "input.received",
+          topicId: envelope.topicId,
+          idempotencyKey: `type:input.received/topicId:${envelope.topicId}/chunkId:${job.chunkId}`,
+          payload: {
+            topicId: envelope.topicId,
+            inputId: job.inputId,
+            text: job.text,
+            contentType: "text/plain",
+            sourceType: job.sourceType,
+            batchId: job.batchId,
+            conversationId: job.conversationId,
+            threadId: job.threadId,
+            chunkId: job.chunkId,
+            chunkIndex: job.chunkIndex,
+            estimatedInputTokens: job.estimatedInputTokens,
+            reservedOutputTokens: job.reservedOutputTokens,
+            priority: job.priority,
+            timeRange: job.timeRange,
+            messageIds: job.messageIds,
+          },
+        },
+      ],
+    };
+  }
+}
 
 class MediaReceivedHandler implements AgentHandler {
   readonly eventType = "media.received";
@@ -120,6 +165,30 @@ class AtomCreatedHandler implements AgentHandler {
     const atomIds = requireStringArray(envelope.payload, "atomIds");
     const resolution = await topicResolverService.resolve(envelope, inputId, atomIds);
 
+    if (resolution.shouldReview) {
+      await organizeReviewRepository.upsert({
+        workspaceId: envelope.workspaceId,
+        reviewId: `review:topic-resolution:${inputId}`,
+        reviewType: "topic_resolution_ambiguous",
+        topicId: resolution.resolvedTopicId,
+        sourceInputId: inputId,
+        sourceBatchId:
+          typeof envelope.payload.batchId === "string" ? envelope.payload.batchId : undefined,
+        sourceThreadId:
+          typeof envelope.payload.threadId === "string" ? envelope.payload.threadId : undefined,
+        sourceChunkId:
+          typeof envelope.payload.chunkId === "string" ? envelope.payload.chunkId : undefined,
+        candidateTopicIds: resolution.candidateTopicIds,
+        reason: resolution.resolutionReason,
+        metadata: {
+          resolutionMode: resolution.resolutionMode,
+          resolutionConfidence: resolution.resolutionConfidence,
+          scoreGap: resolution.scoreGap,
+          candidateTopicStates: resolution.candidateTopicStates,
+        },
+      });
+    }
+
     return {
       ack: true,
       emittedEvents: [
@@ -138,6 +207,8 @@ class AtomCreatedHandler implements AgentHandler {
             topicLifecycleStateAtResolution: resolution.topicLifecycleStateAtResolution,
             candidateTopicIds: resolution.candidateTopicIds,
             candidateTopicStates: resolution.candidateTopicStates,
+            shouldReview: resolution.shouldReview,
+            scoreGap: resolution.scoreGap,
           },
         },
       ],
@@ -464,6 +535,7 @@ class TopicMetricsUpdatedHandler implements AgentHandler {
 }
 
 export const pipelineHandlers: AgentHandler[] = [
+  new OrganizeIngestReceivedHandler(),
   new MediaReceivedHandler(),
   new InputReceivedHandler(),
   new AtomCreatedHandler(),

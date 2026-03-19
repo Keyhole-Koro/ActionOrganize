@@ -15,6 +15,7 @@ import { AtomRepository } from "../repositories/atom-repository.js";
 import { dedupeNodeIds, resolveNodeAsync } from "./cleaner-entity-resolution.js";
 import { EvidenceRepository } from "../repositories/evidence-repository.js";
 import { WorkspaceRepository } from "../repositories/workspace-repository.js";
+import { OrganizeReviewRepository } from "../repositories/organize-review-repository.js";
 import { callGemini } from "../lib/gemini-client.js";
 import { logger } from "../lib/logger.js";
 
@@ -79,6 +80,7 @@ export class PipelineWriteService {
   private readonly atomRepository = new AtomRepository();
   private readonly evidenceRepository = new EvidenceRepository();
   private readonly workspaceRepository = new WorkspaceRepository();
+  private readonly organizeReviewRepository = new OrganizeReviewRepository();
 
   private isFirestoreBackend() {
     return env.STATE_BACKEND === "firestore";
@@ -201,6 +203,25 @@ export class PipelineWriteService {
         };
       }),
     );
+    const lineageByNodeId = new Map<string, {
+      sourceInputIds: Set<string>;
+      sourceChunkIds: Set<string>;
+      sourceThreadIds: Set<string>;
+      evidenceAtomIds: Set<string>;
+    }>();
+    for (const candidate of resolvedCandidates) {
+      const current = lineageByNodeId.get(candidate.nodeId) ?? {
+        sourceInputIds: new Set<string>(),
+        sourceChunkIds: new Set<string>(),
+        sourceThreadIds: new Set<string>(),
+        evidenceAtomIds: new Set<string>(),
+      };
+      if (candidate.atom.sourceInputId) current.sourceInputIds.add(candidate.atom.sourceInputId);
+      if (candidate.atom.sourceChunkId) current.sourceChunkIds.add(candidate.atom.sourceChunkId);
+      if (candidate.atom.sourceThreadId) current.sourceThreadIds.add(candidate.atom.sourceThreadId);
+      current.evidenceAtomIds.add(candidate.atom.atomId);
+      lineageByNodeId.set(candidate.nodeId, current);
+    }
 
     // AI-driven semantic clustering for the entire bundle.
     const { topicTitle, map: hierarchyMap } = await this.planHierarchyWithGemini(envelope.topicId, resolvedCandidates);
@@ -388,6 +409,10 @@ export class PipelineWriteService {
           parentId,
           schemaVersion,
           contextSummary,
+          sourceInputIds: [...(lineageByNodeId.get(atomNodeId)?.sourceInputIds ?? [])],
+          sourceChunkIds: [...(lineageByNodeId.get(atomNodeId)?.sourceChunkIds ?? [])],
+          sourceThreadIds: [...(lineageByNodeId.get(atomNodeId)?.sourceThreadIds ?? [])],
+          evidenceAtomIds: [...(lineageByNodeId.get(atomNodeId)?.evidenceAtomIds ?? [])],
         });
 
         if (!candidate.isMerged) {
@@ -436,6 +461,28 @@ export class PipelineWriteService {
       );
     } catch (error) {
         throw error;
+    }
+
+    if (reissuedAtomIds.length > 0) {
+      await this.organizeReviewRepository.upsert({
+        workspaceId: envelope.workspaceId,
+        reviewId: `review:low-signal:${bundleId}`,
+        reviewType: "low_signal_atoms",
+        topicId: envelope.topicId,
+        sourceInputId: inputId,
+        sourceBatchId:
+          typeof envelope.payload.batchId === "string" ? envelope.payload.batchId : undefined,
+        sourceThreadId:
+          typeof envelope.payload.threadId === "string" ? envelope.payload.threadId : undefined,
+        sourceChunkId:
+          typeof envelope.payload.chunkId === "string" ? envelope.payload.chunkId : undefined,
+        reason: "one or more atoms were reissued due to low confidence or empty claims",
+        metadata: {
+          bundleId,
+          reissuedAtomIds,
+          sourceDraftVersion,
+        },
+      });
     }
 
     await this.bundleRepository.markApplied(envelope.workspaceId, envelope.topicId, bundleId);
