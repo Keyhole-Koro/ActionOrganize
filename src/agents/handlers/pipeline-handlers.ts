@@ -88,6 +88,7 @@ class OrganizeIngestReceivedHandler implements AgentHandler {
             priority: job.priority,
             timeRange: job.timeRange,
             messageIds: job.messageIds,
+            assetRefs: job.assetRefs,
           },
         },
       ],

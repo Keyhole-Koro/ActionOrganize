@@ -12,6 +12,15 @@ export type EvidenceRecord = {
     kind: string;
     confidence: number;
     schemaVersion?: number;
+    sourceAssetRefs?: Array<{
+        assetId: string;
+        messageId: string;
+        kind: string;
+        mimeType: string;
+        gcsUri: string;
+        downloadUrl?: string;
+        originalPath: string;
+    }>;
 };
 
 export class EvidenceRepository {
@@ -35,6 +44,7 @@ export class EvidenceRepository {
                 kind: record.kind,
                 confidence: record.confidence,
                 schemaVersion: record.schemaVersion,
+                sourceAssetRefs: record.sourceAssetRefs,
                 updatedAt: FieldValue.serverTimestamp(),
                 createdAt: FieldValue.serverTimestamp(),
             },

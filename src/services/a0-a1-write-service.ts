@@ -59,6 +59,7 @@ export class A0A1WriteService {
       sourceThreadId: job.threadId,
       sourceChunkId: job.chunkId,
       sourceMessageIds: job.messageIds,
+      sourceAssetRefs: job.assetRefs,
       sourceTimeRangeStart: job.timeRange.start,
       sourceTimeRangeEnd: job.timeRange.end,
       estimatedInputTokens: job.estimatedInputTokens,
@@ -260,6 +261,17 @@ export class A0A1WriteService {
             typeof envelope.payload.chunkId === "string" ? envelope.payload.chunkId : undefined,
           sourceMessageIds: Array.isArray(envelope.payload.messageIds)
             ? envelope.payload.messageIds.filter((value): value is string => typeof value === "string")
+            : undefined,
+          sourceAssetRefs: Array.isArray(envelope.payload.assetRefs)
+            ? envelope.payload.assetRefs.filter((value): value is {
+                assetId: string;
+                messageId: string;
+                kind: string;
+                mimeType: string;
+                gcsUri: string;
+                downloadUrl?: string;
+                originalPath: string;
+              } => typeof value === "object" && value !== null)
             : undefined,
           sourceTimeRangeStart:
             envelope.payload.timeRange &&

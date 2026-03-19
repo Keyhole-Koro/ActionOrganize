@@ -208,6 +208,15 @@ export class PipelineWriteService {
       sourceChunkIds: Set<string>;
       sourceThreadIds: Set<string>;
       evidenceAtomIds: Set<string>;
+      sourceAssetRefs: Map<string, {
+        assetId: string;
+        messageId: string;
+        kind: string;
+        mimeType: string;
+        gcsUri: string;
+        downloadUrl?: string;
+        originalPath: string;
+      }>;
     }>();
     for (const candidate of resolvedCandidates) {
       const current = lineageByNodeId.get(candidate.nodeId) ?? {
@@ -215,10 +224,14 @@ export class PipelineWriteService {
         sourceChunkIds: new Set<string>(),
         sourceThreadIds: new Set<string>(),
         evidenceAtomIds: new Set<string>(),
+        sourceAssetRefs: new Map(),
       };
       if (candidate.atom.sourceInputId) current.sourceInputIds.add(candidate.atom.sourceInputId);
       if (candidate.atom.sourceChunkId) current.sourceChunkIds.add(candidate.atom.sourceChunkId);
       if (candidate.atom.sourceThreadId) current.sourceThreadIds.add(candidate.atom.sourceThreadId);
+      for (const assetRef of candidate.atom.sourceAssetRefs ?? []) {
+        current.sourceAssetRefs.set(assetRef.assetId, assetRef);
+      }
       current.evidenceAtomIds.add(candidate.atom.atomId);
       lineageByNodeId.set(candidate.nodeId, current);
     }
@@ -413,6 +426,7 @@ export class PipelineWriteService {
           sourceChunkIds: [...(lineageByNodeId.get(atomNodeId)?.sourceChunkIds ?? [])],
           sourceThreadIds: [...(lineageByNodeId.get(atomNodeId)?.sourceThreadIds ?? [])],
           evidenceAtomIds: [...(lineageByNodeId.get(atomNodeId)?.evidenceAtomIds ?? [])],
+          sourceAssetRefs: [...(lineageByNodeId.get(atomNodeId)?.sourceAssetRefs.values() ?? [])],
         });
 
         if (!candidate.isMerged) {
@@ -456,6 +470,7 @@ export class PipelineWriteService {
             kind: candidate.atom.kind,
             confidence: candidate.atom.confidence,
             schemaVersion: bundleForApply?.schemaVersion,
+            sourceAssetRefs: candidate.atom.sourceAssetRefs,
           }),
         ),
       );

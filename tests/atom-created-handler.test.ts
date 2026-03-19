@@ -41,6 +41,8 @@ describe("AtomCreatedHandler", () => {
         "tp-ai": "active",
         "tp-other": "active",
       },
+      shouldReview: false,
+      scoreGap: 0.42,
     });
 
     const handler = getAgentHandler("atom.created");
@@ -80,6 +82,8 @@ describe("AtomCreatedHandler", () => {
               "tp-ai": "active",
               "tp-other": "active",
             },
+            shouldReview: false,
+            scoreGap: 0.42,
           },
         },
       ],

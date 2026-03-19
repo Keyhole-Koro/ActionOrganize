@@ -58,6 +58,7 @@ describe("OrganizeIngestReceivedHandler", () => {
         },
         messageIds: ["m1", "m2"],
         text: "hello world",
+        assetRefs: [],
       }),
     );
 
@@ -98,6 +99,7 @@ describe("OrganizeIngestReceivedHandler", () => {
               end: "2026-01-01T01:00:00+00:00",
             },
             messageIds: ["m1", "m2"],
+            assetRefs: [],
           },
         },
       ],

@@ -15,6 +15,15 @@ export type InputRecord = {
   sourceThreadId?: string;
   sourceChunkId?: string;
   sourceMessageIds?: string[];
+  sourceAssetRefs?: Array<{
+    assetId: string;
+    messageId: string;
+    kind: string;
+    mimeType: string;
+    gcsUri: string;
+    downloadUrl?: string;
+    originalPath: string;
+  }>;
   sourceTimeRangeStart?: string;
   sourceTimeRangeEnd?: string;
   estimatedInputTokens?: number;
@@ -40,6 +49,7 @@ export class InputRepository {
           sourceThreadId: record.sourceThreadId,
           sourceChunkId: record.sourceChunkId,
           sourceMessageIds: record.sourceMessageIds,
+          sourceAssetRefs: record.sourceAssetRefs,
           sourceTimeRangeStart: record.sourceTimeRangeStart,
           sourceTimeRangeEnd: record.sourceTimeRangeEnd,
           estimatedInputTokens: record.estimatedInputTokens,
