@@ -1,4 +1,4 @@
-# ActionOrganize
+# Act - Organization Layer
 
 Node.js + TypeScript + Express で動く Organize backend です。
 
