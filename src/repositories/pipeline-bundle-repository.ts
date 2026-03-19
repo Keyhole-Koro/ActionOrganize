@@ -52,9 +52,9 @@ export class PipelineBundleRepository {
     return null;
   }
 
-  docRef(workspaceId: string, topicId: string, bundleId: string) {
+  docRef(workspaceId: string, _topicId: string, bundleId: string) {
     return this.firestore.doc(
-      `workspaces/${workspaceId}/topics/${topicId}/pipelineBundles/${bundleId}`,
+      `workspaces/${workspaceId}/pipelineBundles/${bundleId}`,
     );
   }
 

@@ -14,8 +14,8 @@ export type EdgeRecord = {
 export class EdgeRepository {
   private readonly firestore = getFirestore();
 
-  docRef(workspaceId: string, topicId: string, edgeId: string) {
-    return this.firestore.doc(`workspaces/${workspaceId}/topics/${topicId}/edges/${edgeId}`);
+  docRef(workspaceId: string, _topicId: string, edgeId: string) {
+    return this.firestore.doc(`workspaces/${workspaceId}/edges/${edgeId}`);
   }
 
   write(tx: Transaction, record: EdgeRecord) {

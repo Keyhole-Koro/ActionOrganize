@@ -18,7 +18,7 @@ export class AtomRepository {
 
   async upsert(record: AtomRecord) {
     await this.firestore
-      .doc(`workspaces/${record.workspaceId}/topics/${record.topicId}/atoms/${record.atomId}`)
+      .doc(`workspaces/${record.workspaceId}/atoms/${record.atomId}`)
       .set(
         {
           topicId: record.topicId,
@@ -36,10 +36,10 @@ export class AtomRepository {
       );
   }
 
-  async getByIds(workspaceId: string, topicId: string, atomIds: string[]) {
+  async getByIds(workspaceId: string, _topicId: string, atomIds: string[]) {
     const snapshots = await Promise.all(
       atomIds.map((atomId) =>
-        this.firestore.doc(`workspaces/${workspaceId}/topics/${topicId}/atoms/${atomId}`).get(),
+        this.firestore.doc(`workspaces/${workspaceId}/atoms/${atomId}`).get(),
       ),
     );
 

@@ -21,9 +21,10 @@ export class IndexItemRepository {
 
   async upsert(record: IndexItemRecord) {
     await this.firestore
-      .doc(`workspaces/${record.workspaceId}/topics/${record.topicId}/indexItems/${record.indexItemId}`)
+      .doc(`workspaces/${record.workspaceId}/indexItems/${record.indexItemId}`)
       .set(
         {
+          workspaceId: record.workspaceId,
           topicId: record.topicId,
           nodeId: record.nodeId,
           schemaVersion: record.schemaVersion,

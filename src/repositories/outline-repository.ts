@@ -12,8 +12,8 @@ export type OutlineRecord = {
 export class OutlineRepository {
   private readonly firestore = getFirestore();
 
-  docRef(workspaceId: string, topicId: string, version: number) {
-    return this.firestore.doc(`workspaces/${workspaceId}/topics/${topicId}/outlines/${version}`);
+  docRef(workspaceId: string, _topicId: string, version: number) {
+    return this.firestore.doc(`workspaces/${workspaceId}/outlines/${version}`);
   }
 
   write(tx: Transaction, record: OutlineRecord) {
