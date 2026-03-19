@@ -3,10 +3,12 @@ import { getAgentHandler } from "../agents/registry.js";
 import type { DecodedPushEvent } from "../core/pubsub.js";
 import { EventPublisher } from "./event-publisher.js";
 import { createEventLedgerRepository, createLeaseRepository } from "../repositories/index.js";
+import { InputProgressRepository } from "../repositories/input-progress-repository.js";
 
 export class EventProcessor {
   private readonly ledgerRepository = createEventLedgerRepository();
   private readonly leaseRepository = createLeaseRepository();
+  private readonly inputProgressRepository = new InputProgressRepository();
   private readonly publisher = new EventPublisher();
 
   async process(decoded: DecodedPushEvent) {
@@ -47,12 +49,36 @@ export class EventProcessor {
 
       return result;
     } catch (error) {
+      const errorName = error instanceof Error ? error.name : "UnknownError";
+      const errorMessage = error instanceof Error ? error.message : "unknown error";
+
       await this.ledgerRepository.markFailed(
         decoded.envelope.workspaceId,
         decoded.envelope.idempotencyKey,
-        error instanceof Error ? error.name : "UnknownError",
-        error instanceof Error ? error.message : "unknown error",
+        errorName,
+        errorMessage,
       );
+
+      // Attempt to update input progress if inputId is available in payload
+      const inputId = decoded.envelope.payload.inputId;
+      if (typeof inputId === "string" && inputId.length > 0) {
+        try {
+          await this.inputProgressRepository.advance({
+            workspaceId: decoded.envelope.workspaceId,
+            topicId: decoded.envelope.topicId,
+            inputId,
+            status: "failed",
+            currentPhase: decoded.envelope.type,
+            lastEventType: decoded.envelope.type,
+            traceId: decoded.envelope.traceId,
+            errorCode: errorName,
+            errorMessage: errorMessage,
+          });
+        } catch (ipError) {
+          // Log but don't crash if progress update fails
+          console.error("Failed to update input progress on error:", ipError);
+        }
+      }
 
       if (leaseResourceKey) {
         await this.leaseRepository.release(decoded.envelope.workspaceId, leaseResourceKey, owner);

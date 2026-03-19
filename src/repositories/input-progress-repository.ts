@@ -38,12 +38,12 @@ const statusOrder: Record<InputProgressStatus, number> = {
 export class InputProgressRepository {
   private readonly firestore = getFirestore();
 
-  private docPath(workspaceId: string, topicId: string, inputId: string) {
-    return `workspaces/${workspaceId}/topics/${topicId}/inputProgress/${inputId}`;
+  private docPath(workspaceId: string, inputId: string) {
+    return `workspaces/${workspaceId}/inputProgress/${inputId}`;
   }
 
   async advance(record: InputProgressRecord) {
-    const ref = this.firestore.doc(this.docPath(record.workspaceId, record.topicId, record.inputId));
+    const ref = this.firestore.doc(this.docPath(record.workspaceId, record.inputId));
 
     await this.firestore.runTransaction(async (tx) => {
       const snapshot = await tx.get(ref);
@@ -77,15 +77,7 @@ export class InputProgressRepository {
     });
   }
 
-  async advanceMany(record: InputProgressRecord, topicIds: string[]) {
-    const uniqueTopicIds = [...new Set(topicIds.filter((topicId) => topicId.length > 0))];
-    await Promise.all(
-      uniqueTopicIds.map((topicId) =>
-        this.advance({
-          ...record,
-          topicId,
-        }),
-      ),
-    );
+  async advanceMany(record: InputProgressRecord, _topicIds: string[]) {
+    await this.advance(record);
   }
 }

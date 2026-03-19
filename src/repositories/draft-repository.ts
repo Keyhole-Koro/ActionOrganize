@@ -12,8 +12,8 @@ export type DraftRecord = {
 export class DraftRepository {
   private readonly firestore = getFirestore();
 
-  docRef(workspaceId: string, topicId: string, version: number) {
-    return this.firestore.doc(`workspaces/${workspaceId}/topics/${topicId}/drafts/${version}`);
+  docRef(workspaceId: string, _topicId: string, version: number) {
+    return this.firestore.doc(`workspaces/${workspaceId}/drafts/${version}`);
   }
 
   write(tx: Transaction, record: DraftRecord) {

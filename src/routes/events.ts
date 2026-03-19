@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { ZodError } from "zod";
-import { AppError, DuplicateEventError, InvalidEventError } from "../core/errors.js";
+import { AppError, DuplicateEventError, EventInProgressError, InvalidEventError } from "../core/errors.js";
 import { decodePushEvent } from "../core/pubsub.js";
 import { logger } from "../lib/logger.js";
 import { EventProcessor } from "../services/event-processor.js";
@@ -67,7 +67,8 @@ eventsRouter.post("/events", async (req, res) => {
     }
 
     if (error instanceof AppError) {
-      logger.error(
+      const logFn = error instanceof EventInProgressError ? logger.warn.bind(logger) : logger.error.bind(logger);
+      logFn(
         {
           error: error.message,
           retryable: error.retryable,
@@ -84,12 +85,17 @@ eventsRouter.post("/events", async (req, res) => {
       return;
     }
 
-    logger.error({ error }, "unexpected event processing failure");
+    logger.error({ 
+      error: error instanceof Error ? error.message : "unknown",
+      stack: error instanceof Error ? error.stack : undefined,
+      type: error instanceof Error ? error.constructor.name : typeof error
+    }, "unexpected event processing failure");
     res.status(503).json({
       ok: false,
       ack: false,
       retryable: true,
       stage: "PROCESS_AGENT",
+      error: error instanceof Error ? error.message : "unknown",
     });
   }
 });

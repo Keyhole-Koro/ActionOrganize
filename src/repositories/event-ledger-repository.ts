@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { FieldValue } from "@google-cloud/firestore";
-import { DuplicateEventError, TemporaryDependencyError } from "../core/errors.js";
+import { DuplicateEventError, EventInProgressError } from "../core/errors.js";
 import { getFirestore } from "../core/firestore.js";
 import type { EventEnvelope } from "../models/envelope.js";
 import type { EventLedgerPort } from "./contracts.js";
@@ -24,7 +24,7 @@ export class EventLedgerRepository implements EventLedgerPort {
           throw new DuplicateEventError("event already processed");
         }
         if (data?.status === "started") {
-          throw new TemporaryDependencyError("event is already in progress");
+          throw new EventInProgressError("event is already in progress");
         }
       }
 

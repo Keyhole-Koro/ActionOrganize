@@ -1,10 +1,10 @@
 import { InvalidEventError } from "../../core/errors.js";
+import { logger } from "../../lib/logger.js";
 import { A0A1WriteService } from "../../services/a0-a1-write-service.js";
 import { A2DraftAppenderService } from "../../services/a2-draft-appender-service.js";
 import { A5BalancerService } from "../../services/a5-balancer-service.js";
 import { DiscordNodeService } from "../../services/discord-node-service.js";
 import { PipelineWriteService } from "../../services/pipeline-write-service.js";
-import { TopicResolverService } from "../../services/topic-resolver-service.js";
 import type { AgentContext, AgentHandler, AgentResult } from "../types.js";
 
 type Payload = Record<string, unknown>;
@@ -48,7 +48,6 @@ const writeService = new A0A1WriteService();
 const draftAppenderService = new A2DraftAppenderService();
 const a5BalancerService = new A5BalancerService();
 const pipelineWriteService = new PipelineWriteService();
-const topicResolverService = new TopicResolverService();
 const discordNodeService = new DiscordNodeService();
 
 class MediaReceivedHandler implements AgentHandler {
@@ -56,20 +55,39 @@ class MediaReceivedHandler implements AgentHandler {
 
   async handle({ envelope }: AgentContext): Promise<AgentResult> {
     const inputId = requireString(envelope.payload, "inputId");
+    logger.info({ inputId }, "A0: processing media received event");
 
-    await writeService.onMediaReceived(envelope, inputId);
+    try {
+      const extractedText = await writeService.onMediaReceived(envelope, inputId);
 
-    return {
-      ack: true,
-      emittedEvents: [
-        {
-          type: "input.received",
-          topicId: envelope.topicId,
-          idempotencyKey: `type:input.received/topicId:${envelope.topicId}/inputId:${inputId}`,
-          payload: { topicId: envelope.topicId, inputId },
-        },
-      ],
-    };
+      // If text extraction resulted in nothing, we don't proceed to A1.
+      // A0 might have failed to read from GCS or Gemini might have failed.
+      if (!extractedText || extractedText.trim().length === 0) {
+        logger.warn({ inputId }, "A0: no text extracted, skipping A1 event emission");
+        return { ack: true, emittedEvents: [] };
+      }
+
+      return {
+        ack: true,
+        emittedEvents: [
+          {
+            type: "input.received",
+            topicId: envelope.topicId,
+            idempotencyKey: `type:input.received/topicId:${envelope.topicId}/inputId:${inputId}`,
+            payload: {
+              topicId: envelope.topicId,
+              inputId,
+              text: extractedText,
+            },
+          },
+        ],
+      };
+    } catch (error) {
+      logger.error({ error, inputId }, "A0: failed during media received handling");
+      // We still ACK to prevent infinite retry of a broken media file,
+      // but we don't emit downstream events.
+      return { ack: true, emittedEvents: [] };
+    }
   }
 }
 
@@ -100,26 +118,27 @@ class AtomCreatedHandler implements AgentHandler {
   async handle({ envelope }: AgentContext): Promise<AgentResult> {
     const inputId = requireString(envelope.payload, "inputId");
     const atomIds = requireStringArray(envelope.payload, "atomIds");
-    const resolution = await topicResolverService.resolve(envelope, inputId, atomIds);
+    // Always attach to the topic the user was on when they uploaded.
+    const resolvedTopicId = envelope.topicId;
 
     return {
       ack: true,
       emittedEvents: [
         {
           type: "topic.resolved",
-          topicId: resolution.resolvedTopicId,
-          orderingKey: resolution.resolvedTopicId,
-          idempotencyKey: `type:topic.resolved/topicId:${resolution.resolvedTopicId}/inputId:${inputId}`,
+          topicId: resolvedTopicId,
+          orderingKey: resolvedTopicId,
+          idempotencyKey: `type:topic.resolved/topicId:${resolvedTopicId}/inputId:${inputId}`,
           payload: {
-            resolvedTopicId: resolution.resolvedTopicId,
+            resolvedTopicId,
             inputId,
             atomIds,
-            resolutionMode: resolution.resolutionMode,
-            resolutionConfidence: resolution.resolutionConfidence,
-            resolutionReason: resolution.resolutionReason,
-            topicLifecycleStateAtResolution: resolution.topicLifecycleStateAtResolution,
-            candidateTopicIds: resolution.candidateTopicIds,
-            candidateTopicStates: resolution.candidateTopicStates,
+            resolutionMode: "existing",
+            resolutionConfidence: 1,
+            resolutionReason: "pinned to upload topic",
+            topicLifecycleStateAtResolution: "active",
+            candidateTopicIds: [],
+            candidateTopicStates: {},
           },
         },
       ],
@@ -273,6 +292,7 @@ class BundleCreatedHandler implements AgentHandler {
           payload: {
             topicId: envelope.topicId,
             atomId,
+            claim: "",
             reason: "schema_incompatible_or_low_confidence",
           },
         })),
@@ -297,6 +317,7 @@ class AtomReissuedHandler implements AgentHandler {
 
   async handle({ envelope }: AgentContext): Promise<AgentResult> {
     const atomId = requireString(envelope.payload, "atomId");
+    const claim = requireString(envelope.payload, "claim");
     const reason = optionalString(envelope.payload, "reason") ?? "unknown";
 
     // Re-emit as input.received to re-process through A1 → TopicResolver
@@ -310,7 +331,7 @@ class AtomReissuedHandler implements AgentHandler {
           payload: {
             topicId: envelope.topicId,
             inputId: `reissue:${atomId}`,
-            text: typeof envelope.payload.claim === "string" ? envelope.payload.claim : "",
+            text: claim,
             contentType: "text/plain",
             reissueSource: atomId,
             reissueReason: reason,

@@ -171,8 +171,11 @@ export class PipelineWriteService {
     const atoms = sourceAtomIds.length
       ? await this.atomRepository.getByIds(envelope.workspaceId, envelope.topicId, sourceAtomIds)
       : [];
+
+    // Decisions on reissuing low-quality atoms are now based on AI-assigned confidence 
+    // from the extraction stage, rather than a hardcoded threshold.
     const reissuedAtomIds = atoms
-      .filter((atom) => atom.confidence < 0.5 || atom.claim.trim().length === 0)
+      .filter((atom) => atom.confidence <= 0.2 || atom.claim.trim().length === 0)
       .map((atom) => atom.atomId);
     const candidateAtoms = atoms.filter((atom) => !reissuedAtomIds.includes(atom.atomId));
     const existingClaimNodes = await this.nodeRepository.listClaimNodes(
@@ -196,9 +199,15 @@ export class PipelineWriteService {
         };
       }),
     );
+
+    // AI-driven semantic clustering for the entire bundle.
+    const { topicTitle, map: hierarchyMap } = await this.planHierarchyWithGemini(envelope.topicId, resolvedCandidates);
+
     const hierarchyCandidates = resolvedCandidates.map((item) => {
-      const clusterTitle = this.deriveClusterTitle(item.atom.title, item.atom.claim);
-      const subclusterTitle = this.deriveSubclusterTitle(clusterTitle, item.atom.title, item.atom.claim);
+      const { clusterTitle, subclusterTitle } = hierarchyMap.get(item.nodeId) || {
+        clusterTitle: "General Insights",
+        subclusterTitle: "Captured Claims",
+      };
       const clusterSlug = this.toStableSlug(clusterTitle);
       const subclusterSlug = this.toStableSlug(subclusterTitle);
 
@@ -268,6 +277,7 @@ export class PipelineWriteService {
         {
           workspaceId: envelope.workspaceId,
           topicId: envelope.topicId,
+          title: topicTitle,
           latestOutlineVersion: nextOutlineVersion,
           latestOutlineRef: outlineRef,
           updatedAt: FieldValue.serverTimestamp(),
@@ -302,7 +312,7 @@ export class PipelineWriteService {
         topicId: envelope.topicId,
         nodeId: rootNodeId,
         kind: "topic",
-        title: `Topic ${envelope.topicId}`,
+        title: topicTitle,
         parentId: null,
         schemaVersion,
         contextSummary: `Outline v${nextOutlineVersion} generated from ${bundleId}`,
@@ -499,7 +509,6 @@ Return ONLY the JSON object.`;
         try {
           evidenceCount = await this.evidenceRepository.countByNode(
             envelope.workspaceId,
-            envelope.topicId,
             nodeId,
           );
         } catch (e) {
@@ -785,74 +794,64 @@ Return ONLY the JSON object, no other text.`;
     return `edge:${sourceNodeId}->${targetNodeId}`;
   }
 
-  private deriveClusterTitle(title: string, claim: string) {
-    const text = `${title} ${claim}`.toLowerCase();
-    if (/auth|token|permission|access|security|credential/.test(text)) {
-      return "Security & Access";
-    }
-    if (/latency|throughput|performance|slow|optimi[sz]e/.test(text)) {
-      return "Performance";
-    }
-    if (/schema|data|database|model|field|table/.test(text)) {
-      return "Data Model";
-    }
-    if (/ui|ux|user|screen|onboard|journey|experience/.test(text)) {
-      return "User Experience";
-    }
-    if (/error|retry|timeout|failure|resilien|incident/.test(text)) {
-      return "Reliability";
-    }
-    return "General Insights";
-  }
+  private async planHierarchyWithGemini(
+    topicId: string,
+    candidates: Array<{ atom: { title: string; claim: string }; nodeId: string }>,
+  ): Promise<{ topicTitle: string; map: Map<string, { clusterTitle: string; subclusterTitle: string }> }> {
+    if (candidates.length === 0) return { topicTitle: topicId, map: new Map() };
 
-  private deriveSubclusterTitle(clusterTitle: string, title: string, claim: string) {
-    const text = `${title} ${claim}`.toLowerCase();
-    if (clusterTitle === "Security & Access") {
-      if (/refresh|expire|ttl|lifecycle|rotation/.test(text)) {
-        return "Token Lifecycle";
-      }
-      if (/permission|role|scope|grant/.test(text)) {
-        return "Authorization Rules";
-      }
-      return "Security Controls";
+    const nodeSummary = candidates
+      .map((c) => `- nodeId: "${c.nodeId}", title: "${c.atom.title}", claim: "${c.atom.claim}"`)
+      .join("\n");
+
+    const prompt = `You are a knowledge graph architect. Organize the following list of nodes into a deep, semantic hierarchy of clusters and subclusters.
+
+Nodes:
+${nodeSummary}
+
+Goal: Group related nodes together into meaningful categories.
+- "topicTitle" is a concise natural-language title (≤60 chars) that summarizes the overall theme of ALL the nodes above.
+- "clusterTitle" is the high-level category (e.g., "Technical Infrastructure", "Strategic Goals").
+- "subclusterTitle" is a specific sub-topic within that category (e.g., "Database Migration", "User Growth Metrics").
+
+Guidelines:
+1. Be specific. Avoid generic titles like "General Insights".
+2. Ensure every claim belongs to the most relevant subcluster.
+3. If a claim doesn't fit a specific subcluster, create a new one.
+4. Write all titles in the same language as the node content.
+
+Return a JSON object with:
+- "topicTitle": string — the overall topic title
+- "nodes": object where each key is a nodeId and the value is an object with "clusterTitle" and "subclusterTitle"
+Return ONLY the JSON object.`;
+
+    type GeminiResult = { topicTitle: string; nodes: Record<string, { clusterTitle: string; subclusterTitle: string }> };
+    const { parsed } = await callGemini<GeminiResult>(
+      prompt,
+      (value) => {
+        if (typeof value !== "object" || value === null) {
+          throw new Error("Gemini hierarchy plan: invalid response shape");
+        }
+        const v = value as Record<string, unknown>;
+        if (typeof v.topicTitle !== "string" || v.topicTitle.length === 0) {
+          throw new Error("Gemini hierarchy plan: missing topicTitle");
+        }
+        if (typeof v.nodes !== "object" || v.nodes === null) {
+          throw new Error("Gemini hierarchy plan: missing nodes");
+        }
+        return value as GeminiResult;
+      },
+      { modelTier: "quality" },
+    );
+
+    const map = new Map<string, { clusterTitle: string; subclusterTitle: string }>();
+    for (const [nodeId, titles] of Object.entries(parsed.nodes)) {
+      map.set(nodeId, {
+        clusterTitle: titles.clusterTitle || "General Insights",
+        subclusterTitle: titles.subclusterTitle || "Captured Claims",
+      });
     }
-    if (clusterTitle === "Data Model") {
-      if (/migration|version|evolv|compat/.test(text)) {
-        return "Schema Evolution";
-      }
-      if (/quality|duplicate|null|missing|consisten/.test(text)) {
-        return "Data Quality";
-      }
-      return "Data Structure";
-    }
-    if (clusterTitle === "Reliability") {
-      if (/retry|backoff|idempot/.test(text)) {
-        return "Retry Strategy";
-      }
-      if (/timeout|circuit|degrad|fallback/.test(text)) {
-        return "Failure Handling";
-      }
-      return "Operational Stability";
-    }
-    if (clusterTitle === "Performance") {
-      if (/cache|memo|index/.test(text)) {
-        return "Caching & Indexing";
-      }
-      if (/query|join|scan/.test(text)) {
-        return "Query Efficiency";
-      }
-      return "Runtime Efficiency";
-    }
-    if (clusterTitle === "User Experience") {
-      if (/copy|label|text|message/.test(text)) {
-        return "UI Communication";
-      }
-      if (/flow|step|journey|onboard/.test(text)) {
-        return "Interaction Flow";
-      }
-      return "Product Experience";
-    }
-    return "Captured Claims";
+    return { topicTitle: parsed.topicTitle, map };
   }
 
   private toStableSlug(value: string) {
@@ -865,8 +864,8 @@ Return ONLY the JSON object, no other text.`;
   }
 
   private buildHierarchyPlan(candidates: HierarchyCandidate[]): HierarchyPlan {
-    const MIN_CLAIMS_FOR_CLUSTER = 3;
-    const MIN_CLAIMS_FOR_SUBCLUSTER = 2;
+    const MIN_CLAIMS_FOR_CLUSTER = 2;
+    const MIN_CLAIMS_FOR_SUBCLUSTER = 1;
     const clusterMap = new Map<
       string,
       {

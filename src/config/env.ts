@@ -34,8 +34,8 @@ const envSchema = z
     ORGANIZE_GCS_BUCKET: requiredString("ORGANIZE_GCS_BUCKET"),
     LEASE_TTL_SECONDS: requiredPositiveInt("LEASE_TTL_SECONDS"),
     GOOGLE_API_KEY: requiredString("GOOGLE_API_KEY"),
-    GEMINI_MODEL_FAST: requiredString("GEMINI_MODEL_FAST"),
-    GEMINI_MODEL_QUALITY: requiredString("GEMINI_MODEL_QUALITY"),
+    GEMINI_MODEL_FAST: z.string().default("gemini-3-flash"),
+    GEMINI_MODEL_QUALITY: z.string().default("gemini-3-pro"),
   });
 
 export type AppEnv = z.infer<typeof envSchema>;

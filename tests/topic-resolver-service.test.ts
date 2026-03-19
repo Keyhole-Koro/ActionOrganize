@@ -22,11 +22,11 @@ describe("TopicResolverService", () => {
   afterEach(() => {
     vi.restoreAllMocks();
     env.GOOGLE_API_KEY = "dummy-key";
-    env.GEMINI_MODEL_FAST = "gemini-3-flash";
-    env.GEMINI_MODEL_QUALITY = "gemini-3-pro";
+    env.GEMINI_MODEL_FAST = "gemini-3-flash-preview";
+    env.GEMINI_MODEL_QUALITY = "gemini-3-pro-preview";
   });
 
-  it("uses deterministic resolution when high-confidence winner exists", async () => {
+  it("uses Gemini decision when winner exists", async () => {
     const infoSpy = vi.spyOn(logger, "info").mockImplementation(() => logger);
 
     const service = new TopicResolverService();
@@ -49,13 +49,35 @@ describe("TopicResolverService", () => {
       getByIds: vi.fn().mockResolvedValue([{ title: "design", claim: "AI architecture" }]),
     };
 
+    vi.spyOn(globalThis, "fetch").mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        candidates: [
+          {
+            content: {
+              parts: [
+                {
+                  text: JSON.stringify({
+                    decision: "attach_existing",
+                    resolvedTopicId: "tp-ai",
+                    confidence: 0.95,
+                    reason: "strong match",
+                  }),
+                },
+              ],
+            },
+          },
+        ],
+      }),
+    } as Response);
+
     const result = await service.resolve(makeEnvelope({ text: "AI architecture design" }), "input-1", ["a1"]);
 
     expect(result.resolutionMode).toBe("existing");
     expect(result.resolvedTopicId).toBe("tp-ai");
     expect(infoSpy).toHaveBeenCalledWith(
       expect.objectContaining({
-        resolverMode: "deterministic-short-circuit",
+        resolverMode: "gemini",
         resolutionMode: "existing",
       }),
       "topic resolved",
@@ -64,14 +86,14 @@ describe("TopicResolverService", () => {
 
   it("uses Gemini decision for ambiguous candidates", async () => {
     env.GOOGLE_API_KEY = "dummy-key";
-    env.GEMINI_MODEL_FAST = "gemini-3-flash";
-    env.GEMINI_MODEL_QUALITY = "gemini-3-pro";
+    env.GEMINI_MODEL_FAST = "gemini-3-flash-preview";
+    env.GEMINI_MODEL_QUALITY = "gemini-3-pro-preview";
     const infoSpy = vi.spyOn(logger, "info").mockImplementation(() => logger);
 
     const service = new TopicResolverService();
     (
       service as unknown as {
-        topicRepository: { listCandidates: () => Promise<unknown[]> };
+        topicRepository: { listCandidates: (workspaceId: string, limit: number) => Promise<unknown[]> };
         atomRepository: { getByIds: () => Promise<unknown[]> };
       }
     ).topicRepository = {
@@ -119,7 +141,7 @@ describe("TopicResolverService", () => {
     expect(infoSpy).toHaveBeenCalledWith(
       expect.objectContaining({
         resolverMode: "gemini",
-        geminiModel: "gemini-3-pro",
+        geminiModel: "gemini-3-pro-preview",
         resolutionMode: "existing",
       }),
       "topic resolved",
@@ -128,12 +150,12 @@ describe("TopicResolverService", () => {
 
   it("throws retryable error when Gemini request fails", async () => {
     env.GOOGLE_API_KEY = "dummy-key";
-    env.GEMINI_MODEL_QUALITY = "gemini-3-pro";
+    env.GEMINI_MODEL_QUALITY = "gemini-3-pro-preview";
 
     const service = new TopicResolverService();
     (
       service as unknown as {
-        topicRepository: { listCandidates: () => Promise<unknown[]> };
+        topicRepository: { listCandidates: (workspaceId: string, limit: number) => Promise<unknown[]> };
         atomRepository: { getByIds: () => Promise<unknown[]> };
       }
     ).topicRepository = {
@@ -156,12 +178,12 @@ describe("TopicResolverService", () => {
 
   it("falls back to create_new when Gemini picks a topic outside candidates", async () => {
     env.GOOGLE_API_KEY = "dummy-key";
-    env.GEMINI_MODEL_QUALITY = "gemini-3-pro";
+    env.GEMINI_MODEL_QUALITY = "gemini-3-pro-preview";
 
     const service = new TopicResolverService();
     (
       service as unknown as {
-        topicRepository: { listCandidates: () => Promise<unknown[]> };
+        topicRepository: { listCandidates: (workspaceId: string, limit: number) => Promise<unknown[]> };
         atomRepository: { getByIds: () => Promise<unknown[]> };
       }
     ).topicRepository = {

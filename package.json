@@ -8,8 +8,8 @@
     "build": "tsc -p tsconfig.json",
     "start": "node dist/index.js",
     "typecheck": "tsc --noEmit -p tsconfig.json",
-    "test": "PORT=8090 STATE_BACKEND=firestore GOOGLE_CLOUD_PROJECT=test-project PUBSUB_EMULATOR_HOST=localhost:8085 PUBSUB_TOPIC_NAME=mind-events PUBSUB_PUBLISH_ENABLED=false FIRESTORE_EMULATOR_HOST=localhost:8081 STORAGE_EMULATOR_HOST=http://localhost:4443 ORGANIZE_GCS_BUCKET=test-bucket LEASE_TTL_SECONDS=120 GOOGLE_API_KEY=test-key GEMINI_MODEL_FAST=gemini-3-flash GEMINI_MODEL_QUALITY=gemini-3-pro vitest run",
-    "test:watch": "PORT=8090 STATE_BACKEND=firestore GOOGLE_CLOUD_PROJECT=test-project PUBSUB_EMULATOR_HOST=localhost:8085 PUBSUB_TOPIC_NAME=mind-events PUBSUB_PUBLISH_ENABLED=false FIRESTORE_EMULATOR_HOST=localhost:8081 STORAGE_EMULATOR_HOST=http://localhost:4443 ORGANIZE_GCS_BUCKET=test-bucket LEASE_TTL_SECONDS=120 GOOGLE_API_KEY=test-key GEMINI_MODEL_FAST=gemini-3-flash GEMINI_MODEL_QUALITY=gemini-3-pro vitest"
+    "test": "PORT=8090 STATE_BACKEND=firestore GOOGLE_CLOUD_PROJECT=test-project PUBSUB_EMULATOR_HOST=localhost:8085 PUBSUB_TOPIC_NAME=mind-events PUBSUB_PUBLISH_ENABLED=false FIRESTORE_EMULATOR_HOST=localhost:8081 STORAGE_EMULATOR_HOST=http://localhost:4443 ORGANIZE_GCS_BUCKET=test-bucket LEASE_TTL_SECONDS=120 GOOGLE_API_KEY=test-key GEMINI_MODEL_FAST=gemini-3-flash-preview GEMINI_MODEL_QUALITY=gemini-3-pro-preview vitest run",
+    "test:watch": "PORT=8090 STATE_BACKEND=firestore GOOGLE_CLOUD_PROJECT=test-project PUBSUB_EMULATOR_HOST=localhost:8085 PUBSUB_TOPIC_NAME=mind-events PUBSUB_PUBLISH_ENABLED=false FIRESTORE_EMULATOR_HOST=localhost:8081 STORAGE_EMULATOR_HOST=http://localhost:4443 ORGANIZE_GCS_BUCKET=test-bucket LEASE_TTL_SECONDS=120 GOOGLE_API_KEY=test-key GEMINI_MODEL_FAST=gemini-3-flash-preview GEMINI_MODEL_QUALITY=gemini-3-pro-preview vitest"
   },
   "dependencies": {
     "@google-cloud/firestore": "^7.11.3",

@@ -46,16 +46,10 @@ export type ResolvedNode = {
   similarity: number;
 };
 
-const MERGE_THRESHOLD = 0.85;
-const AMBIGUOUS_LOW = 0.55;
-
 /**
  * Resolves whether an atom should merge into an existing node or create a new one.
- *
- * Three zones:
- * - score >= 0.85 → auto-merge (high confidence)
- * - 0.55 <= score < 0.85 → ambiguous → ask Gemini if available
- * - score < 0.55 → create new node
+ * Always consults Gemini for the final decision, using Jaccard scores only to
+ * identify the most relevant candidates for the context window.
  */
 export async function resolveNodeAsync(
   existingNodes: NodeCandidate[],
@@ -69,7 +63,7 @@ export async function resolveNodeAsync(
   const titleTokens = tokenize(options.atomTitle);
   const claimTokens = tokenize(options.atomClaim);
 
-  // Score all candidates
+  // Score all candidates using Jaccard as a rough heuristic for ranking only
   const scored: Array<{ node: NodeCandidate; score: number }> = [];
   for (const node of existingNodes) {
     if (
@@ -86,28 +80,23 @@ export async function resolveNodeAsync(
   }
 
   scored.sort((a, b) => b.score - a.score);
-  const best = scored[0] ?? null;
-
-  if (!best || best.score < AMBIGUOUS_LOW) {
-    return { nodeId: options.fallbackNodeId, isMerged: false, similarity: best?.score ?? 0 };
-  }
-
-  if (best.score >= MERGE_THRESHOLD) {
-    return { nodeId: best.node.nodeId, isMerged: true, similarity: best.score };
-  }
-
-  // Ambiguous zone — ask Gemini
+  
+  // Mandatory consultation with Gemini. 
+  // We pass top 5 candidates even if their scores are low, as semantic meaning
+  // might override simple string overlap.
   const topCandidates = scored.slice(0, 5);
   const geminiResult = await resolveWithGemini(options, topCandidates);
+  
   if (geminiResult.decision === "merge" && geminiResult.targetNodeId) {
     const target = topCandidates.find((c) => c.node.nodeId === geminiResult.targetNodeId);
     return {
       nodeId: geminiResult.targetNodeId,
       isMerged: true,
-      similarity: target?.score ?? best.score,
+      similarity: geminiResult.confidence, // Use AI confidence as the similarity metric
     };
   }
-  return { nodeId: options.fallbackNodeId, isMerged: false, similarity: best.score };
+
+  return { nodeId: options.fallbackNodeId, isMerged: false, similarity: geminiResult.confidence };
 }
 
 /**

@@ -34,11 +34,17 @@ export class TopicRepository {
   }
 
   async ensure(record: TopicRecord) {
-    await this.docRef(record.workspaceId, record.topicId).set(
+    // Do not overwrite title if the document already exists — title is owned by ActionAct.
+    const ref = this.docRef(record.workspaceId, record.topicId);
+    const snapshot = await ref.get();
+    const existingTitle = snapshot.exists
+      ? (typeof snapshot.get("title") === "string" ? snapshot.get("title") as string : undefined)
+      : undefined;
+    await ref.set(
       {
         workspaceId: record.workspaceId,
         topicId: record.topicId,
-        title: record.title ?? record.topicId,
+        title: existingTitle ?? record.title ?? record.topicId,
         status: record.status ?? "active",
         schemaVersion: 1,
         updatedAt: FieldValue.serverTimestamp(),

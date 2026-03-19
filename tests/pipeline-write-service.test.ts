@@ -171,8 +171,6 @@ describe("PipelineWriteService.onBundleCreated", () => {
 describe("PipelineWriteService hierarchy planning", () => {
   it("groups claims into deterministic cluster nodes with normalizer collapse", () => {
     const service = new PipelineWriteService() as unknown as {
-      deriveClusterTitle: (title: string, claim: string) => string;
-      deriveSubclusterTitle: (clusterTitle: string, title: string, claim: string) => string;
       toStableSlug: (value: string) => string;
       toClusterNodeId: (topicId: string, clusterSlug: string) => string;
       toSubclusterNodeId: (topicId: string, clusterSlug: string, subclusterSlug: string) => string;
@@ -198,15 +196,8 @@ describe("PipelineWriteService hierarchy planning", () => {
       };
     };
 
-    const clusterTitle = service.deriveClusterTitle(
-      "Refresh token rotation is missing",
-      "Token lifecycle policy is incomplete",
-    );
-    const subclusterTitle = service.deriveSubclusterTitle(
-      clusterTitle,
-      "Refresh token rotation is missing",
-      "Token lifecycle policy is incomplete",
-    );
+    const clusterTitle = "Authentication Security";
+    const subclusterTitle = "Token Management";
     const clusterSlug = service.toStableSlug(clusterTitle);
     const subclusterSlug = service.toStableSlug(subclusterTitle);
     const clusterNodeId = service.toClusterNodeId("topic-1", clusterSlug);

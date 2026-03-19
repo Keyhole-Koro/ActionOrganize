@@ -3,9 +3,9 @@ import { env } from "../config/env.js";
 import { InputRepository } from "../repositories/input-repository.js";
 import { InputProgressRepository } from "../repositories/input-progress-repository.js";
 import { AtomRepository } from "../repositories/atom-repository.js";
-import type { EventEnvelope } from "../models/envelope.js";
+import { readFromGcsUri, readMarkdown, writeMarkdown } from "../core/storage.js";
+
 import { callGemini } from "../lib/gemini-client.js";
-import { writeMarkdown } from "../lib/gcs-writer.js";
 import { logger } from "../lib/logger.js";
 
 // ── Types ───────────────────────────────────────────────────────────────────
@@ -42,30 +42,63 @@ export class A0A1WriteService {
 
   // ── A0 MediaReceived ────────────────────────────────────────────────────
 
-  async onMediaReceived(envelope: EventEnvelope, inputId: string) {
+  async onMediaReceived(envelope: EventEnvelope, inputId: string): Promise<string> {
     if (!this.isFirestoreBackend()) {
-      return;
+      return "";
     }
+
+    const contentType =
+      typeof envelope.payload.contentType === "string" ? envelope.payload.contentType : "text/plain";
+    const rawRef =
+      typeof envelope.payload.rawRef === "string" ? envelope.payload.rawRef : undefined;
 
     await this.inputRepository.upsert({
       workspaceId: envelope.workspaceId,
       topicId: envelope.topicId,
       inputId,
       status: "received",
-      contentType:
-        typeof envelope.payload.contentType === "string" ? envelope.payload.contentType : "text/plain",
-      rawRef: typeof envelope.payload.rawRef === "string" ? envelope.payload.rawRef : undefined,
+      contentType,
+      rawRef,
     });
 
-    // Write extracted text to GCS
-    const extractedText =
-      typeof envelope.payload.text === "string" ? envelope.payload.text : "";
-    if (extractedText.length > 0) {
+    // Extract text from the uploaded raw file
+    let sourceText = "";
+    if (rawRef) {
       try {
-        await writeMarkdown(`mind/inputs/${inputId}.md`, extractedText);
+        if (contentType.startsWith("text/")) {
+          // Plain text: read bytes directly from upload bucket
+          const raw = await readFromGcsUri(rawRef);
+          sourceText = raw.toString("utf-8");
+          logger.info({ inputId, contentType }, "A0: read source text from GCS upload bucket");
+        } else {
+          // Binary (PDF, image, etc.) or unknown (octet-stream):
+          // In local dev, Gemini cannot read from emulator GCS URIs.
+          // We first attempt to read as raw text regardless of content type.
+          try {
+            const raw = await readFromGcsUri(rawRef);
+            const possibleText = raw.toString("utf-8");
+            // Simple heuristic to check if it's actually text
+            if (possibleText.length > 0 && !/[\x00-\x08\x0B\x0C\x0E-\x1F]/.test(possibleText.slice(0, 512))) {
+              sourceText = possibleText;
+              logger.info({ inputId, contentType }, "A0: read as raw text (heuristic match)");
+            }
+          } catch (e) {
+            // ignore and proceed to Gemini
+          }
+
+          if (!sourceText) {
+            // delegate to Gemini for text extraction
+            sourceText = await this.extractTextFromFileWithGemini(rawRef, contentType);
+            logger.info({ inputId, contentType }, "A0: extracted source text via Gemini");
+          }
+        }
       } catch (error) {
-        logger.warn({ error, inputId }, "failed to write input to GCS, continuing");
+        logger.error({ error, inputId, rawRef }, "A0: failed to extract source text");
       }
+    }
+
+    if (sourceText.trim().length > 0) {
+      await writeMarkdown(`mind/inputs/${inputId}.md`, sourceText);
     }
 
     await this.inputProgressRepository.advance({
@@ -77,14 +110,43 @@ export class A0A1WriteService {
       lastEventType: envelope.type,
       traceId: envelope.traceId,
     });
+
+    return sourceText;
   }
 
-  // ── A1 InputReceived (two-stage atom extraction) ────────────────────────
+  private async extractTextFromFileWithGemini(fileUri: string, mimeType: string): Promise<string> {
+    const prompt = "Extract all text content from this file and return it as plain text. Do not add any commentary, formatting, or JSON — just the raw text content.";
+    
+    let filePart: GeminiFilePart;
+    if (env.STORAGE_EMULATOR_HOST) {
+      // Local dev: download and send as inline data
+      const data = await readFromGcsUri(fileUri);
+      filePart = { data, mimeType };
+    } else {
+      // Production: send file URI
+      filePart = { fileUri, mimeType };
+    }
+
+    const result = await callGemini(
+      prompt,
+      (v) => {
+        if (typeof v === "string") return v;
+        throw new Error("expected string");
+      },
+      { modelTier: "fast", jsonMode: false },
+      [filePart],
+    );
+    return result.raw;
+  }
+
+  // ── A1 InputReceived (Gemini-driven atom extraction) ───────────────────
 
   async onInputReceived(envelope: EventEnvelope, inputId: string): Promise<string[]> {
     if (!this.isFirestoreBackend()) {
       return [];
     }
+
+    logger.info({ inputId, eventType: envelope.type }, "A1: processing input received event");
 
     await this.inputProgressRepository.advance({
       workspaceId: envelope.workspaceId,
@@ -97,27 +159,37 @@ export class A0A1WriteService {
     });
 
     // ── Resolve source text ───────────────────────────────────────────────
-    if (typeof envelope.payload.text !== "string" || envelope.payload.text.trim().length === 0) {
-      throw new Error(`input.received payload.text is required but was missing or empty (inputId=${inputId})`);
+    let sourceText = typeof envelope.payload.text === "string" ? envelope.payload.text : "";
+
+    if (sourceText.trim().length === 0) {
+      // Fallback: try to read from GCS if payload is empty
+      try {
+        sourceText = await readMarkdown(`mind/inputs/${inputId}.md`);
+        logger.info({ inputId }, "A1: resolved source text from GCS");
+      } catch (error) {
+        throw new Error(
+          `input.received payload.text is missing and GCS fallback failed (inputId=${inputId}). Original error: ${
+            error instanceof Error ? error.message : "unknown"
+          }`,
+        );
+      }
     }
-    const sourceText = envelope.payload.text;
 
-    // ── Stage 1: Deterministic claim boundary ─────────────────────────────
-    const candidates = splitIntoClaims(sourceText);
-    logger.info(
-      { inputId, candidateCount: candidates.length },
-      "A1: deterministic split complete",
-    );
+    if (sourceText.trim().length === 0) {
+      throw new Error(`input.received source text is empty (inputId=${inputId})`);
+    }
 
-    // ── Stage 2: Gemini normalization ─────────────────────────────────────
-    const normalizedAtoms = await this.normalizeWithGemini(candidates);
+    // ── Gemini-driven extraction and normalization ────────────────────────
+    // We no longer use deterministic splitIntoClaims. 
+    // Gemini identifies boundaries and content units based on semantic meaning.
+    const normalizedAtoms = await this.extractAndNormalizeWithGemini(sourceText);
     logger.info(
       {
         inputId,
         total: normalizedAtoms.length,
         rejected: normalizedAtoms.filter((a) => a.reject).length,
       },
-      "A1: Gemini normalization complete",
+      "A1: Gemini extraction and normalization complete",
     );
 
     // ── Filter rejected ───────────────────────────────────────────────────
@@ -212,29 +284,27 @@ export class A0A1WriteService {
     }, [envelope.topicId, sourceTopicId]);
   }
 
-  // ── Gemini normalization ────────────────────────────────────────────────
+  // ── Gemini extraction and normalization ─────────────────────────────────
 
-  private async normalizeWithGemini(candidates: ClaimCandidate[]): Promise<NormalizedAtom[]> {
-    if (candidates.length === 0) return [];
-
-    const prompt = buildNormalizationPrompt(candidates);
+  private async extractAndNormalizeWithGemini(sourceText: string): Promise<NormalizedAtom[]> {
+    const prompt = buildExtractionAndNormalizationPrompt(sourceText);
 
     const { parsed } = await callGemini<NormalizedAtom[]>(prompt, (value) => {
       if (!Array.isArray(value)) {
-        throw new Error("Expected an array of normalized atoms");
+        throw new Error("Expected an array of atoms");
       }
       return value.map((item: Record<string, unknown>, i: number) => {
         if (typeof item.title !== "string" || item.title.trim().length === 0) {
-          throw new Error(`Gemini normalization: item[${i}].title is missing or empty`);
+          throw new Error(`Gemini extraction: item[${i}].title is missing or empty`);
         }
         if (typeof item.claim !== "string" || item.claim.trim().length === 0) {
-          throw new Error(`Gemini normalization: item[${i}].claim is missing or empty`);
+          throw new Error(`Gemini extraction: item[${i}].claim is missing or empty`);
         }
         if (!VALID_KINDS.includes(item.kind as AtomKind)) {
-          throw new Error(`Gemini normalization: item[${i}].kind "${item.kind}" is not a valid AtomKind`);
+          throw new Error(`Gemini extraction: item[${i}].kind "${item.kind}" is not a valid AtomKind`);
         }
         if (typeof item.confidence !== "number" || !Number.isFinite(item.confidence)) {
-          throw new Error(`Gemini normalization: item[${i}].confidence is not a number`);
+          throw new Error(`Gemini extraction: item[${i}].confidence is not a number`);
         }
         return {
           title: item.title.slice(0, 120),
@@ -252,63 +322,6 @@ export class A0A1WriteService {
 }
 
 // ── Pure helpers ───────────────────────────────────────────────────────────
-
-/**
- * Stage 1: Deterministic claim boundary splitting.
- * Splits text by sentence boundaries, bullet points, and discourse markers.
- */
-export function splitIntoClaims(text: string): ClaimCandidate[] {
-  if (!text || text.trim().length === 0) {
-    return [{ index: 0, text: text?.trim() || "", sourceSpan: "" }];
-  }
-
-  const candidates: ClaimCandidate[] = [];
-
-  // Split by newlines first, then by sentence boundaries within each line
-  const lines = text.split(/\n+/).map((l) => l.trim()).filter((l) => l.length > 0);
-
-  for (const line of lines) {
-    // Strip bullet markers
-    const cleaned = line.replace(/^[\s]*[-*•▪▸►◆]\s*/, "").trim();
-    if (cleaned.length === 0) continue;
-
-    // Split by sentence boundaries (Japanese and English)
-    const sentences = cleaned
-      .split(/(?<=[。．.!?！？;；])\s*/)
-      .map((s) => s.trim())
-      .filter((s) => s.length > 0);
-
-    // Further split by discourse markers for multi-claim sentences
-    for (const sentence of sentences) {
-      const subClaims = splitByDiscourseMarkers(sentence);
-      for (const sub of subClaims) {
-        if (sub.trim().length > 0) {
-          candidates.push({
-            index: candidates.length,
-            text: sub.trim(),
-            sourceSpan: sentence,
-          });
-        }
-      }
-    }
-  }
-
-  if (candidates.length === 0) {
-    return [{ index: 0, text: text.trim(), sourceSpan: text.trim() }];
-  }
-
-  return candidates;
-}
-
-const DISCOURSE_MARKERS = /(?:しかし|一方で?|また|さらに|ただし|ところが|なお|加えて|because|therefore|however|moreover|furthermore|additionally|on the other hand|in contrast|meanwhile)/gi;
-
-function splitByDiscourseMarkers(sentence: string): string[] {
-  // Only split if the sentence is long enough to likely contain multiple claims
-  if (sentence.length < 40) return [sentence];
-
-  const parts = sentence.split(DISCOURSE_MARKERS).map((s) => s.trim()).filter((s) => s.length > 5);
-  return parts.length > 1 ? parts : [sentence];
-}
 
 function generateAtomId(topicId: string, inputId: string, candidateIndex: number, claim: string): string {
   const hash = createHash("sha256")
@@ -331,17 +344,12 @@ function snapToConfidenceBucket(raw: number): number {
   return closest;
 }
 
-function buildNormalizationPrompt(candidates: ClaimCandidate[]): string {
-  const candidateList = candidates
-    .map(
-      (c, i) =>
-        `[${i}] "${c.text}"${c.sourceSpan !== c.text ? ` (from: "${c.sourceSpan}")` : ""}`,
-    )
-    .join("\n");
+function buildExtractionAndNormalizationPrompt(sourceText: string): string {
+  return `You are a knowledge extraction agent. Analyze the following source text and extract all distinct, meaningful units of information (Atoms). 
 
-  return `You are a knowledge normalization agent. For each claim candidate below, return a JSON array where each element has:
+For each unit of information, return a JSON array where each element has:
 - "title": a short (≤80 chars) descriptive title
-- "claim": the normalized, self-contained claim text
+- "claim": the normalized, self-contained claim text. It should make sense without the original context.
 - "kind": exactly one of "fact", "definition", "relation", "opinion", "temporal"
 - "confidence": one of 0.95, 0.8, 0.6, 0.4, 0.2
 - "reject": true if this is noise, OCR garbage, or not a meaningful claim
@@ -354,8 +362,10 @@ Kind priority:
 4. opinion (subjective evaluation)
 5. fact (verifiable, default)
 
-Candidates:
-${candidateList}
+Important: Generate all "title" and "claim" text in the same language as the Source Text.
+
+Source Text:
+${sourceText}
 
 Return ONLY a JSON array, no other text.`;
 }

@@ -16,7 +16,7 @@ export class InputRepository {
 
   async upsert(record: InputRecord) {
     await this.firestore
-      .doc(`workspaces/${record.workspaceId}/topics/${record.topicId}/inputs/${record.inputId}`)
+      .doc(`workspaces/${record.workspaceId}/inputs/${record.inputId}`)
       .set(
         {
           topicId: record.topicId,
