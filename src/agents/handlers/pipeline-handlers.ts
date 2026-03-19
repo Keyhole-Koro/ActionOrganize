@@ -4,6 +4,7 @@ import { A0A1WriteService } from "../../services/a0-a1-write-service.js";
 import { A2DraftAppenderService } from "../../services/a2-draft-appender-service.js";
 import { A5BalancerService } from "../../services/a5-balancer-service.js";
 import { PipelineWriteService } from "../../services/pipeline-write-service.js";
+import { TopicResolverService } from "../../services/topic-resolver-service.js";
 import type { AgentContext, AgentHandler, AgentResult } from "../types.js";
 
 type Payload = Record<string, unknown>;
@@ -47,6 +48,7 @@ const writeService = new A0A1WriteService();
 const draftAppenderService = new A2DraftAppenderService();
 const a5BalancerService = new A5BalancerService();
 const pipelineWriteService = new PipelineWriteService();
+const topicResolverService = new TopicResolverService();
 
 class MediaReceivedHandler implements AgentHandler {
   readonly eventType = "media.received";
@@ -116,27 +118,26 @@ class AtomCreatedHandler implements AgentHandler {
   async handle({ envelope }: AgentContext): Promise<AgentResult> {
     const inputId = requireString(envelope.payload, "inputId");
     const atomIds = requireStringArray(envelope.payload, "atomIds");
-    // Always attach to the topic the user was on when they uploaded.
-    const resolvedTopicId = envelope.topicId;
+    const resolution = await topicResolverService.resolve(envelope, inputId, atomIds);
 
     return {
       ack: true,
       emittedEvents: [
         {
           type: "topic.resolved",
-          topicId: resolvedTopicId,
-          orderingKey: resolvedTopicId,
-          idempotencyKey: `type:topic.resolved/topicId:${resolvedTopicId}/inputId:${inputId}`,
+          topicId: resolution.resolvedTopicId,
+          orderingKey: resolution.resolvedTopicId,
+          idempotencyKey: `type:topic.resolved/topicId:${resolution.resolvedTopicId}/inputId:${inputId}`,
           payload: {
-            resolvedTopicId,
+            resolvedTopicId: resolution.resolvedTopicId,
             inputId,
             atomIds,
-            resolutionMode: "existing",
-            resolutionConfidence: 1,
-            resolutionReason: "pinned to upload topic",
-            topicLifecycleStateAtResolution: "active",
-            candidateTopicIds: [],
-            candidateTopicStates: {},
+            resolutionMode: resolution.resolutionMode,
+            resolutionConfidence: resolution.resolutionConfidence,
+            resolutionReason: resolution.resolutionReason,
+            topicLifecycleStateAtResolution: resolution.topicLifecycleStateAtResolution,
+            candidateTopicIds: resolution.candidateTopicIds,
+            candidateTopicStates: resolution.candidateTopicStates,
           },
         },
       ],

@@ -36,6 +36,10 @@ const envSchema = z
     GOOGLE_API_KEY: requiredString("GOOGLE_API_KEY"),
     GEMINI_MODEL_FAST: z.string().default("gemini-3-flash-preview"),
     GEMINI_MODEL_QUALITY: z.string().default("gemini-3.1-pro-preview"),
+    LLM_LIMITER_REDIS_URL: requiredString("LLM_LIMITER_REDIS_URL"),
+    LLM_LIMITER_TARGET_TPM: requiredPositiveInt("LLM_LIMITER_TARGET_TPM"),
+    LLM_LIMITER_TARGET_RPM: requiredPositiveInt("LLM_LIMITER_TARGET_RPM"),
+    LLM_LIMITER_MAX_CONCURRENCY: requiredPositiveInt("LLM_LIMITER_MAX_CONCURRENCY"),
   });
 
 export type AppEnv = z.infer<typeof envSchema>;
