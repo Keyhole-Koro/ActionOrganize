@@ -5,8 +5,9 @@ import { InputProgressRepository } from "../repositories/input-progress-reposito
 import { AtomRepository } from "../repositories/atom-repository.js";
 import { readFromGcsUri, readMarkdown, writeMarkdown } from "../core/storage.js";
 
-import { callGemini } from "../lib/gemini-client.js";
+import { callGemini, type GeminiFilePart } from "../lib/gemini-client.js";
 import { logger } from "../lib/logger.js";
+import { type EventEnvelope } from "../models/envelope.js";
 
 // ── Types ───────────────────────────────────────────────────────────────────
 

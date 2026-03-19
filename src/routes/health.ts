@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { env } from "../config/env.js";
 import { listSupportedEventTypes } from "../agents/registry.js";
 
 export const healthRouter = Router();
