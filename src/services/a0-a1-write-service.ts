@@ -117,16 +117,12 @@ export class A0A1WriteService {
 
   private async extractTextFromFileWithGemini(fileUri: string, mimeType: string): Promise<string> {
     const prompt = "Extract all text content from this file and return it as plain text. Do not add any commentary, formatting, or JSON — just the raw text content.";
-    
-    let filePart: GeminiFilePart;
-    if (env.STORAGE_EMULATOR_HOST) {
-      // Local dev: download and send as inline data
-      const data = await readFromGcsUri(fileUri);
-      filePart = { data, mimeType };
-    } else {
-      // Production: send file URI
-      filePart = { fileUri, mimeType };
-    }
+
+    // Always download and send as inline data.
+    // Developer API does not support gs:// URIs in fileData.fileUri —
+    // only Files API URIs (https://generativelanguage.googleapis.com/...) are accepted.
+    const data = await readFromGcsUri(fileUri);
+    const filePart: GeminiFilePart = { data, mimeType };
 
     const result = await callGemini(
       prompt,

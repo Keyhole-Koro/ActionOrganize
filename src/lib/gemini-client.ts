@@ -14,8 +14,7 @@ export interface GeminiOptions {
 }
 
 export interface GeminiFilePart {
-    fileUri?: string;
-    data?: Buffer; // Added raw data support
+    data: Buffer;
     mimeType: string;
 }
 
@@ -82,12 +81,9 @@ export async function callGemini<T = unknown>(
     const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${env.GOOGLE_API_KEY}`;
 
     const parts: unknown[] = [
-        ...(fileParts ?? []).map((f) => {
-            if (f.data) {
-                return { inlineData: { data: f.data.toString("base64"), mimeType: f.mimeType } };
-            }
-            return { fileData: { fileUri: f.fileUri, mimeType: f.mimeType } };
-        }),
+        ...(fileParts ?? []).map((f) => ({
+            inlineData: { data: f.data.toString("base64"), mimeType: f.mimeType },
+        })),
         { text: prompt },
     ];
 
