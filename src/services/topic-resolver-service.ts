@@ -144,7 +144,7 @@ export class TopicResolverService {
     const { parsed } = await callGemini(
       this.buildGeminiPrompt(queryText, scored.slice(0, 5)),
       (value) => this.validateGeminiResolution(value),
-      { modelTier: "quality" },
+      { modelTier: "fast" },
     );
     return parsed;
   }

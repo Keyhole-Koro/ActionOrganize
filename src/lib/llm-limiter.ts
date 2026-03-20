@@ -7,6 +7,34 @@ const WINDOW_TTL_SECONDS = 120;
 const REQUEST_TTL_MS = 330_000;
 const HEADROOM_RATIO = 0.5;
 
+// Lua script: atomically check limits and acquire permit.
+// Returns: 1=granted(new), 0=granted(idempotent), -1=denied(inflight), -2=denied(rpm/tpm)
+// KEYS: [requestKey, rpmKey, tpmKey, inflightKey(zset)]
+// ARGV: [stored, reservedTokens, maxConcurrency, targetRpm, targetTpm,
+//        reqTtlSeconds, winTtlSeconds, reqTtlMs, nowMs, requestId]
+const ACQUIRE_LUA = [
+  "local req_key=KEYS[1] local rpm_key=KEYS[2] local tpm_key=KEYS[3] local inf_key=KEYS[4]",
+  "local stored=ARGV[1] local tokens=tonumber(ARGV[2]) local max_inf=tonumber(ARGV[3])",
+  "local max_rpm=tonumber(ARGV[4]) local max_tpm=tonumber(ARGV[5])",
+  "local req_ttl=tonumber(ARGV[6]) local win_ttl=tonumber(ARGV[7])",
+  "local req_ttl_ms=tonumber(ARGV[8]) local now_ms=tonumber(ARGV[9]) local req_id=ARGV[10]",
+  "redis.call('ZREMRANGEBYSCORE',inf_key,'-inf',now_ms)",
+  "local inf=tonumber(redis.call('ZCARD',inf_key)) or 0",
+  "if inf+1>max_inf then return -1 end",
+  "if redis.call('EXISTS',req_key)==1 then return 0 end",
+  "local rpm=tonumber(redis.call('GET',rpm_key)) or 0",
+  "if rpm+1>max_rpm then return -2 end",
+  "local tpm=tonumber(redis.call('GET',tpm_key)) or 0",
+  "if tpm+tokens>max_tpm then return -2 end",
+  "redis.call('SET',req_key,stored,'EX',req_ttl)",
+  "redis.call('INCRBY',rpm_key,1)",
+  "redis.call('EXPIRE',rpm_key,win_ttl)",
+  "redis.call('INCRBY',tpm_key,tokens)",
+  "redis.call('EXPIRE',tpm_key,win_ttl)",
+  "redis.call('ZADD',inf_key,now_ms+req_ttl_ms,req_id)",
+  "return 1",
+].join("\n");
+
 export type PermitStatus = "ok" | "rate_limited" | "timeout" | "error";
 
 export type AcquirePermitRequest = {
@@ -136,54 +164,33 @@ class RedisLlmLimiterBackend implements LlmLimiterBackend {
 
   async acquire(request: AcquirePermitRequest, nowMs: number): Promise<AcquirePermitResult> {
     const requestKey = this.getRequestKey(request.requestId);
-    const existingRequest = await this.client.get(requestKey);
-    if (existingRequest) {
-      return { granted: true };
-    }
-
     const minute = getMinuteBucket(nowMs);
     const rpmKey = this.getRpmKey(request.model, minute);
     const tpmKey = this.getTpmKey(request.model, minute);
     const inflightKey = this.getInflightKey(request.model);
     const reservedTokens = getReservedTokens(request);
+    const storedPermit: StoredPermit = { model: request.model, reservedTokens };
 
-    const [rpm, tpm, inflight] = await Promise.all([
-      this.client.getInteger(rpmKey),
-      this.client.getInteger(tpmKey),
-      this.client.getInteger(inflightKey),
+    const result = await this.client.eval(ACQUIRE_LUA, [requestKey, rpmKey, tpmKey, inflightKey], [
+      JSON.stringify(storedPermit),
+      String(reservedTokens),
+      String(getMaxConcurrency()),
+      String(getTargetRpm()),
+      String(getTargetTpm()),
+      String(Math.ceil(REQUEST_TTL_MS / 1000)),
+      String(WINDOW_TTL_SECONDS),
+      String(REQUEST_TTL_MS),
+      String(nowMs),
+      request.requestId,
     ]);
 
-    if (inflight + 1 > getMaxConcurrency()) {
-      return { granted: false, retryAfterMs: 250 };
-    }
-    if (rpm + 1 > getTargetRpm()) {
-      return { granted: false, retryAfterMs: getRetryAfterMs(nowMs) };
-    }
-    if (tpm + reservedTokens > getTargetTpm()) {
-      return { granted: false, retryAfterMs: getRetryAfterMs(nowMs) };
-    }
-
-    const stored = await this.client.set(requestKey, JSON.stringify({
-      model: request.model,
-      reservedTokens,
-    }), {
-      exSeconds: Math.ceil(REQUEST_TTL_MS / 1000),
-      nx: true,
-    });
-
-    if (!stored) {
+    if (result === 1 || result === 0) {
       return { granted: true };
     }
-
-    await Promise.all([
-      this.client.incrBy(rpmKey, 1),
-      this.client.expire(rpmKey, WINDOW_TTL_SECONDS),
-      this.client.incrBy(tpmKey, reservedTokens),
-      this.client.expire(tpmKey, WINDOW_TTL_SECONDS),
-      this.client.incrBy(inflightKey, 1),
-    ]);
-
-    return { granted: true };
+    if (result === -1) {
+      return { granted: false, retryAfterMs: 250 };
+    }
+    return { granted: false, retryAfterMs: getRetryAfterMs(nowMs) };
   }
 
   async release(request: ReleasePermitRequest): Promise<void> {
@@ -204,10 +211,7 @@ class RedisLlmLimiterBackend implements LlmLimiterBackend {
 
     if (permit?.model) {
       const inflightKey = this.getInflightKey(permit.model);
-      const inflight = await this.client.incrBy(inflightKey, -1);
-      if (inflight < 0) {
-        await this.client.set(inflightKey, "0");
-      }
+      await this.client.zrem(inflightKey, request.requestId);
     }
 
     if (!permit) {
@@ -298,6 +302,14 @@ class MinimalRedisClient {
 
   async del(key: string): Promise<void> {
     await this.sendCommand(["DEL", key]);
+  }
+
+  async eval(script: string, keys: string[], args: string[]): Promise<string | number | null> {
+    return this.sendCommand(["EVAL", script, String(keys.length), ...keys, ...args]);
+  }
+
+  async zrem(key: string, member: string): Promise<void> {
+    await this.sendCommand(["ZREM", key, member]);
   }
 
   private async sendCommand(command: string[]): Promise<string | number | null> {

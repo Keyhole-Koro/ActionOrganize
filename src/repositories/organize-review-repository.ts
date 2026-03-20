@@ -1,4 +1,4 @@
-import { FieldValue } from "@google-cloud/firestore";
+import { FieldValue, type DocumentSnapshot } from "@google-cloud/firestore";
 import { getFirestore } from "../core/firestore.js";
 
 export type OrganizeReviewRecord = {
@@ -24,24 +24,31 @@ export class OrganizeReviewRepository {
   }
 
   async upsert(record: OrganizeReviewRecord) {
-    await this.docRef(record.workspaceId, record.reviewId).set(
-      {
-        workspaceId: record.workspaceId,
-        reviewId: record.reviewId,
-        reviewType: record.reviewType,
-        topicId: record.topicId,
-        status: record.status ?? "open",
-        sourceInputId: record.sourceInputId,
-        sourceBatchId: record.sourceBatchId,
-        sourceThreadId: record.sourceThreadId,
-        sourceChunkId: record.sourceChunkId,
-        candidateTopicIds: record.candidateTopicIds,
-        reason: record.reason,
-        metadata: record.metadata,
-        updatedAt: FieldValue.serverTimestamp(),
-        createdAt: FieldValue.serverTimestamp(),
-      },
-      { merge: true },
-    );
+    const ref = this.docRef(record.workspaceId, record.reviewId);
+    await this.firestore.runTransaction(async (tx) => {
+      const snapshot = (await tx.get(ref)) as DocumentSnapshot;
+      tx.set(
+        ref,
+        {
+          workspaceId: record.workspaceId,
+          reviewId: record.reviewId,
+          reviewType: record.reviewType,
+          topicId: record.topicId,
+          status: record.status ?? "open",
+          sourceInputId: record.sourceInputId,
+          sourceBatchId: record.sourceBatchId,
+          sourceThreadId: record.sourceThreadId,
+          sourceChunkId: record.sourceChunkId,
+          candidateTopicIds: record.candidateTopicIds,
+          reason: record.reason,
+          metadata: record.metadata,
+          updatedAt: FieldValue.serverTimestamp(),
+          createdAt: snapshot.exists
+            ? snapshot.get("createdAt")
+            : FieldValue.serverTimestamp(),
+        },
+        { merge: true },
+      );
+    });
   }
 }
