@@ -59,6 +59,11 @@ function isQualityModelCircuitOpen(): boolean {
     return false;
 }
 
+function openQualityModelCircuit(reason: string, model: string) {
+    qualityModelExhaustedAt = Date.now();
+    logger.warn({ model, reason }, "quality model failed, opening circuit breaker for 1h");
+}
+
 /**
  * Shared Gemini client for Organize pipeline agents.
  */
@@ -105,6 +110,14 @@ export async function callGemini<T = unknown>(
     const permitWaitMs = Date.now() - acquireStartedAt;
 
     if (!permit.granted) {
+        if (effectiveTier === "quality") {
+            openQualityModelCircuit("permit_denied", model);
+            logger.warn(
+                { model, requestId, retryAfterMs: permit.retryAfterMs ?? 0 },
+                "quality model permit denied, falling back to fast model",
+            );
+            return callGemini(prompt, validate, { ...options, modelTier: "fast" }, fileParts);
+        }
         throw new TemporaryDependencyError(
             `Gemini permit denied for ${model}; retry after ${permit.retryAfterMs ?? 0}ms`,
         );
@@ -117,32 +130,42 @@ export async function callGemini<T = unknown>(
         { text: prompt },
     ];
 
-    const response = await fetch(url, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-            contents: [{ role: "user", parts }],
-            generationConfig: {
-                temperature,
-                ...(jsonMode ? { responseMimeType: "application/json" } : {}),
-            },
-        }),
-        signal: controller.signal,
-    })
-        .catch(async (error) => {
-            await releaseLlmPermit({
+    let response: Response;
+    try {
+        response = await fetch(url, {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({
+                contents: [{ role: "user", parts }],
+                generationConfig: {
+                    temperature,
+                    ...(jsonMode ? { responseMimeType: "application/json" } : {}),
+                },
+            }),
+            signal: controller.signal,
+        });
+    } catch (error) {
+        await releaseLlmPermit({
+            model,
+            requestId,
+            status: error instanceof Error && error.name === "AbortError" ? "timeout" : "error",
+        });
+        if (effectiveTier === "quality") {
+            openQualityModelCircuit(
+                error instanceof Error && error.name === "AbortError" ? "timeout" : "request_error",
                 model,
-                requestId,
-                status: error instanceof Error && error.name === "AbortError" ? "timeout" : "error",
-            });
-            if (error instanceof Error && error.name === "AbortError") {
-                throw new TemporaryDependencyError("Gemini request timed out");
-            }
-            throw new TemporaryDependencyError(
-                `Gemini request failed: ${error instanceof Error ? error.message : "unknown error"}`,
             );
-        })
-        .finally(() => clearTimeout(timeout));
+            return callGemini(prompt, validate, { ...options, modelTier: "fast" }, fileParts);
+        }
+        if (error instanceof Error && error.name === "AbortError") {
+            throw new TemporaryDependencyError("Gemini request timed out");
+        }
+        throw new TemporaryDependencyError(
+            `Gemini request failed: ${error instanceof Error ? error.message : "unknown error"}`,
+        );
+    } finally {
+        clearTimeout(timeout);
+    }
 
     if (!response.ok) {
         const errorBody = await response.text();
@@ -151,10 +174,8 @@ export async function callGemini<T = unknown>(
             requestId,
             status: response.status === 429 ? "rate_limited" : "error",
         });
-        // Fallback: if quality model is quota-exhausted (429), open circuit and retry with fast model
-        if (response.status === 429 && effectiveTier === "quality") {
-            qualityModelExhaustedAt = Date.now();
-            logger.warn({ model }, "quality model quota exhausted (429), opening circuit breaker for 1h, falling back to fast model");
+        if (effectiveTier === "quality") {
+            openQualityModelCircuit(`http_${response.status}`, model);
             return callGemini(prompt, validate, { ...options, modelTier: "fast" }, fileParts);
         }
         throw new TemporaryDependencyError(`Gemini request failed with ${response.status}: ${errorBody}`);
@@ -196,6 +217,10 @@ export async function callGemini<T = unknown>(
             requestId,
             status: "error",
         });
+        if (effectiveTier === "quality") {
+            openQualityModelCircuit("invalid_response", model);
+            return callGemini(prompt, validate, { ...options, modelTier: "fast" }, fileParts);
+        }
         if (error instanceof TemporaryDependencyError) {
             throw error;
         }
