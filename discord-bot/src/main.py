@@ -10,6 +10,7 @@ from firestore_store import (
     index_message_structure,
     resolve_workspace_binding,
 )
+from backfill import run_backfill
 from gcs_store import save_to_gcs
 from pubsub_publisher import publish_discord_message
 
@@ -37,6 +38,7 @@ client = discord.Client(intents=intents)
 @client.event
 async def on_ready() -> None:
     log.info("Discord bot ready. user=%s", client.user)
+    await run_backfill(client, GCS_BUCKET)
 
 
 @client.event
