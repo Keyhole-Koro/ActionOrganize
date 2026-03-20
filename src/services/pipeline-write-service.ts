@@ -14,6 +14,8 @@ import { EdgeRepository } from "../repositories/edge-repository.js";
 import { AtomRepository } from "../repositories/atom-repository.js";
 import { dedupeNodeIds, resolveNodeAsync } from "./cleaner-entity-resolution.js";
 import { EvidenceRepository } from "../repositories/evidence-repository.js";
+import { WorkspaceRepository } from "../repositories/workspace-repository.js";
+import { OrganizeReviewRepository } from "../repositories/organize-review-repository.js";
 import { callGemini } from "../lib/gemini-client.js";
 import { logger } from "../lib/logger.js";
 
@@ -77,6 +79,8 @@ export class PipelineWriteService {
   private readonly edgeRepository = new EdgeRepository();
   private readonly atomRepository = new AtomRepository();
   private readonly evidenceRepository = new EvidenceRepository();
+  private readonly workspaceRepository = new WorkspaceRepository();
+  private readonly organizeReviewRepository = new OrganizeReviewRepository();
 
   private isFirestoreBackend() {
     return env.STATE_BACKEND === "firestore";
@@ -199,6 +203,38 @@ export class PipelineWriteService {
         };
       }),
     );
+    const lineageByNodeId = new Map<string, {
+      sourceInputIds: Set<string>;
+      sourceChunkIds: Set<string>;
+      sourceThreadIds: Set<string>;
+      evidenceAtomIds: Set<string>;
+      sourceAssetRefs: Map<string, {
+        assetId: string;
+        messageId: string;
+        kind: string;
+        mimeType: string;
+        gcsUri: string;
+        downloadUrl?: string;
+        originalPath: string;
+      }>;
+    }>();
+    for (const candidate of resolvedCandidates) {
+      const current = lineageByNodeId.get(candidate.nodeId) ?? {
+        sourceInputIds: new Set<string>(),
+        sourceChunkIds: new Set<string>(),
+        sourceThreadIds: new Set<string>(),
+        evidenceAtomIds: new Set<string>(),
+        sourceAssetRefs: new Map(),
+      };
+      if (candidate.atom.sourceInputId) current.sourceInputIds.add(candidate.atom.sourceInputId);
+      if (candidate.atom.sourceChunkId) current.sourceChunkIds.add(candidate.atom.sourceChunkId);
+      if (candidate.atom.sourceThreadId) current.sourceThreadIds.add(candidate.atom.sourceThreadId);
+      for (const assetRef of candidate.atom.sourceAssetRefs ?? []) {
+        current.sourceAssetRefs.set(assetRef.assetId, assetRef);
+      }
+      current.evidenceAtomIds.add(candidate.atom.atomId);
+      lineageByNodeId.set(candidate.nodeId, current);
+    }
 
     // AI-driven semantic clustering for the entire bundle.
     const { topicTitle, map: hierarchyMap } = await this.planHierarchyWithGemini(envelope.topicId, resolvedCandidates);
@@ -329,6 +365,10 @@ export class PipelineWriteService {
           schemaVersion,
           contextSummary: `Cluster for outline v${nextOutlineVersion}`,
         });
+        this.workspaceRepository.writeMetadata(tx, {
+          workspaceId: envelope.workspaceId,
+          nodeCountIncrement: 1,
+        });
         this.edgeRepository.write(tx, {
           workspaceId: envelope.workspaceId,
           topicId: envelope.topicId,
@@ -350,6 +390,10 @@ export class PipelineWriteService {
             schemaVersion,
             contextSummary: `Subcluster for outline v${nextOutlineVersion}`,
           });
+          this.workspaceRepository.writeMetadata(tx, {
+            workspaceId: envelope.workspaceId,
+            nodeCountIncrement: 1,
+          });
           this.edgeRepository.write(tx, {
             workspaceId: envelope.workspaceId,
             topicId: envelope.topicId,
@@ -365,6 +409,10 @@ export class PipelineWriteService {
       for (const candidate of resolvedCandidates) {
         const parentId = claimPlacementByNodeId.get(candidate.nodeId) ?? rootNodeId;
         const atomNodeId = candidate.nodeId;
+        const contextSummary = candidate.isMerged
+          ? `Merged from bundle ${bundleId} (score=${candidate.similarity.toFixed(2)}): ${candidate.atom.claim}`
+          : candidate.atom.claim;
+
         this.nodeRepository.write(tx, {
           workspaceId: envelope.workspaceId,
           topicId: envelope.topicId,
@@ -373,10 +421,26 @@ export class PipelineWriteService {
           title: candidate.atom.title,
           parentId,
           schemaVersion,
-          contextSummary: candidate.isMerged
-            ? `Merged from bundle ${bundleId} (score=${candidate.similarity.toFixed(2)}): ${candidate.atom.claim}`
-            : candidate.atom.claim,
+          contextSummary,
+          sourceInputIds: [...(lineageByNodeId.get(atomNodeId)?.sourceInputIds ?? [])],
+          sourceChunkIds: [...(lineageByNodeId.get(atomNodeId)?.sourceChunkIds ?? [])],
+          sourceThreadIds: [...(lineageByNodeId.get(atomNodeId)?.sourceThreadIds ?? [])],
+          evidenceAtomIds: [...(lineageByNodeId.get(atomNodeId)?.evidenceAtomIds ?? [])],
+          sourceAssetRefs: [...(lineageByNodeId.get(atomNodeId)?.sourceAssetRefs.values() ?? [])],
         });
+
+        if (!candidate.isMerged) {
+          this.workspaceRepository.writeMetadata(tx, {
+            workspaceId: envelope.workspaceId,
+            nodeCountIncrement: 1,
+            latestNodeSummary: `${candidate.atom.title}: ${candidate.atom.claim}`,
+          });
+        } else {
+          this.workspaceRepository.writeMetadata(tx, {
+            workspaceId: envelope.workspaceId,
+            latestNodeSummary: `(Updated) ${candidate.atom.title}: ${candidate.atom.claim}`,
+          });
+        }
         this.edgeRepository.write(tx, {
           workspaceId: envelope.workspaceId,
           topicId: envelope.topicId,
@@ -406,11 +470,34 @@ export class PipelineWriteService {
             kind: candidate.atom.kind,
             confidence: candidate.atom.confidence,
             schemaVersion: bundleForApply?.schemaVersion,
+            sourceAssetRefs: candidate.atom.sourceAssetRefs,
           }),
         ),
       );
     } catch (error) {
         throw error;
+    }
+
+    if (reissuedAtomIds.length > 0) {
+      await this.organizeReviewRepository.upsert({
+        workspaceId: envelope.workspaceId,
+        reviewId: `review:low-signal:${bundleId}`,
+        reviewType: "low_signal_atoms",
+        topicId: envelope.topicId,
+        sourceInputId: inputId,
+        sourceBatchId:
+          typeof envelope.payload.batchId === "string" ? envelope.payload.batchId : undefined,
+        sourceThreadId:
+          typeof envelope.payload.threadId === "string" ? envelope.payload.threadId : undefined,
+        sourceChunkId:
+          typeof envelope.payload.chunkId === "string" ? envelope.payload.chunkId : undefined,
+        reason: "one or more atoms were reissued due to low confidence or empty claims",
+        metadata: {
+          bundleId,
+          reissuedAtomIds,
+          sourceDraftVersion,
+        },
+      });
     }
 
     await this.bundleRepository.markApplied(envelope.workspaceId, envelope.topicId, bundleId);
@@ -865,7 +952,7 @@ Return ONLY the JSON object.`;
 
   private buildHierarchyPlan(candidates: HierarchyCandidate[]): HierarchyPlan {
     const MIN_CLAIMS_FOR_CLUSTER = 2;
-    const MIN_CLAIMS_FOR_SUBCLUSTER = 1;
+    const MIN_CLAIMS_FOR_SUBCLUSTER = 2;
     const clusterMap = new Map<
       string,
       {
@@ -942,6 +1029,13 @@ Return ONLY the JSON object.`;
         if (keptSubclusters.length === 1 && directClaims.length === 0) {
           directClaims.push(...keptSubclusters[0].claims);
           keptSubclusters.length = 0;
+        }
+
+        // Collapse cluster to root when no subclusters remain and total direct claims are too few
+        // to justify a cluster (each original subcluster had only 1 claim — no grouping value)
+        if (keptSubclusters.length === 0 && directClaims.length <= MIN_CLAIMS_FOR_CLUSTER) {
+          rootClaims.push(...directClaims);
+          return null;
         }
 
         return {

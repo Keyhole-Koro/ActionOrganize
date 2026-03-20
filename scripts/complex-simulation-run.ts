@@ -1,6 +1,6 @@
-import { EventProcessor } from "./src/services/event-processor.js";
-import type { EventEnvelope } from "./src/models/envelope.js";
-import { setGeminiMockHandler } from "./src/lib/gemini-client.js";
+import { EventProcessor } from "../src/services/event-processor.js";
+import type { EventEnvelope } from "../src/models/envelope.js";
+import { setGeminiMockHandler } from "../src/lib/gemini-client.js";
 
 // --- シミュレーション用の高度な AI モック ---
 setGeminiMockHandler(async (prompt, validate) => {

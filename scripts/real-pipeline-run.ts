@@ -1,7 +1,7 @@
-import { EventProcessor } from "./src/services/event-processor.js";
-import { resolveRepositories } from "./src/repositories/index.js";
-import type { EventEnvelope } from "./src/models/envelope.js";
-import { logger } from "./src/lib/logger.js";
+import { EventProcessor } from "../src/services/event-processor.js";
+import { resolveRepositories } from "../src/repositories/index.js";
+import type { EventEnvelope } from "../src/models/envelope.js";
+import { logger } from "../src/lib/logger.js";
 
 async function main() {
   // 環境設定 (Firestoreは使わずメモリ、PubSubはオフ、AIキーはダミー)

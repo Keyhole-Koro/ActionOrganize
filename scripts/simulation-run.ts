@@ -1,6 +1,6 @@
-import { EventProcessor } from "./src/services/event-processor.js";
-import type { EventEnvelope } from "./src/models/envelope.js";
-import { setGeminiMockHandler } from "./src/lib/gemini-client.js";
+import { EventProcessor } from "../src/services/event-processor.js";
+import type { EventEnvelope } from "../src/models/envelope.js";
+import { setGeminiMockHandler } from "../src/lib/gemini-client.js";
 
 // --- Intelligent Mocking based on Prompt Content ---
 setGeminiMockHandler(async (prompt, validate) => {

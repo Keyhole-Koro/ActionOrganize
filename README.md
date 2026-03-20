@@ -1,4 +1,4 @@
-# ActionOrganize
+# Act - Organization Layer
 
 Node.js + TypeScript + Express で動く Organize backend です。
 
@@ -10,6 +10,11 @@ npm run dev
 npm run typecheck
 npm run build
 ```
+
+## Docs
+
+* `docs/organize-ingest-llm-architecture.md`
+  * 大量会話履歴 ingest と shared LLM limiter の推奨構成
 
 起動時に必須環境変数を検証します。missing や空文字では起動しません。
 

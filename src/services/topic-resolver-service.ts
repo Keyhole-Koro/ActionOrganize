@@ -14,9 +14,10 @@ export type TopicResolution = {
   topicLifecycleStateAtResolution: string;
   candidateTopicIds: string[];
   candidateTopicStates: Record<string, string>;
+  shouldReview: boolean;
+  scoreGap: number | null;
 };
 
-const ATTACH_THRESHOLD = 0.8;
 const SCORE_GAP_THRESHOLD = 0.15;
 
 type ScoredCandidate = {
@@ -57,6 +58,8 @@ export class TopicResolverService {
     const candidateTopicStates = Object.fromEntries(
       scored.map(({ candidate }) => [candidate.topicId, candidate.status]),
     );
+    const scoreGap =
+      scored.length >= 2 ? Number((scored[0].score - scored[1].score).toFixed(4)) : null;
 
     // Consultation with Gemini is mandatory. No deterministic short-circuits or fallbacks.
     const gemini = await this.resolveWithGemini(queryText, scored);
@@ -81,6 +84,10 @@ export class TopicResolverService {
           topicLifecycleStateAtResolution: selected.candidate.status,
           candidateTopicIds,
           candidateTopicStates,
+          shouldReview:
+            gemini.confidence < 0.75 ||
+            (scoreGap !== null && scoreGap < SCORE_GAP_THRESHOLD),
+          scoreGap,
         };
         logger.info(
           {
@@ -110,6 +117,10 @@ export class TopicResolverService {
       topicLifecycleStateAtResolution: "active",
       candidateTopicIds,
       candidateTopicStates,
+      shouldReview:
+        gemini.confidence < 0.75 ||
+        (scoreGap !== null && scoreGap < SCORE_GAP_THRESHOLD),
+      scoreGap,
     };
     logger.info(
       {
@@ -133,7 +144,7 @@ export class TopicResolverService {
     const { parsed } = await callGemini(
       this.buildGeminiPrompt(queryText, scored.slice(0, 5)),
       (value) => this.validateGeminiResolution(value),
-      { modelTier: "quality" },
+      { modelTier: "fast" },
     );
     return parsed;
   }

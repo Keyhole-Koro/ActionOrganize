@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { DuplicateEventError, TemporaryDependencyError } from "../src/core/errors.js";
+import { DuplicateEventError, EventInProgressError } from "../src/core/errors.js";
 import { type EventEnvelope } from "../src/models/envelope.js";
 import {
   MemoryEventLedgerRepository,
@@ -33,7 +33,7 @@ describe("MemoryEventLedgerRepository", () => {
 
     await repo.reserve(envelope);
 
-    await expect(repo.reserve(envelope)).rejects.toBeInstanceOf(TemporaryDependencyError);
+    await expect(repo.reserve(envelope)).rejects.toBeInstanceOf(EventInProgressError);
   });
 
   it("allows retry after markFailed", async () => {

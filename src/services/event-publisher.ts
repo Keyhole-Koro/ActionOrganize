@@ -72,7 +72,17 @@ export class EventPublisher {
 
   private buildOptionalAttributes(payload: EventEnvelope["payload"]) {
     const attributes: Record<string, string> = {};
-    const keys = ["nodeId", "inputId", "bundleId", "draftVersion", "outlineVersion"] as const;
+    const keys = [
+      "nodeId",
+      "inputId",
+      "bundleId",
+      "draftVersion",
+      "outlineVersion",
+      "batchId",
+      "conversationId",
+      "threadId",
+      "chunkId",
+    ] as const;
 
     for (const key of keys) {
       const value = payload[key];

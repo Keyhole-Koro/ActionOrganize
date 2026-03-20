@@ -5,8 +5,10 @@ import { InputProgressRepository } from "../repositories/input-progress-reposito
 import { AtomRepository } from "../repositories/atom-repository.js";
 import { readFromGcsUri, readMarkdown, writeMarkdown } from "../core/storage.js";
 
-import { callGemini } from "../lib/gemini-client.js";
+import { callGemini, type GeminiFilePart } from "../lib/gemini-client.js";
 import { logger } from "../lib/logger.js";
+import { type EventEnvelope } from "../models/envelope.js";
+import type { OrganizeChunkJob } from "../models/organize-ingest-job.js";
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -38,6 +40,41 @@ export class A0A1WriteService {
 
   private isFirestoreBackend() {
     return env.STATE_BACKEND === "firestore";
+  }
+
+  async onOrganizeIngestReceived(envelope: EventEnvelope, job: OrganizeChunkJob): Promise<void> {
+    if (!this.isFirestoreBackend()) {
+      return;
+    }
+
+    await this.inputRepository.upsert({
+      workspaceId: envelope.workspaceId,
+      topicId: envelope.topicId,
+      inputId: job.inputId,
+      status: "received",
+      contentType: "text/plain",
+      sourceType: job.sourceType,
+      sourceBatchId: job.batchId,
+      sourceConversationId: job.conversationId,
+      sourceThreadId: job.threadId,
+      sourceChunkId: job.chunkId,
+      sourceMessageIds: job.messageIds,
+      sourceAssetRefs: job.assetRefs,
+      sourceTimeRangeStart: job.timeRange.start,
+      sourceTimeRangeEnd: job.timeRange.end,
+      estimatedInputTokens: job.estimatedInputTokens,
+      reservedOutputTokens: job.reservedOutputTokens,
+    });
+
+    await this.inputProgressRepository.advance({
+      workspaceId: envelope.workspaceId,
+      topicId: envelope.topicId,
+      inputId: job.inputId,
+      status: "atomizing",
+      currentPhase: "ORGANIZE_INGEST_RECEIVED",
+      lastEventType: envelope.type,
+      traceId: envelope.traceId,
+    });
   }
 
   // ── A0 MediaReceived ────────────────────────────────────────────────────
@@ -116,16 +153,12 @@ export class A0A1WriteService {
 
   private async extractTextFromFileWithGemini(fileUri: string, mimeType: string): Promise<string> {
     const prompt = "Extract all text content from this file and return it as plain text. Do not add any commentary, formatting, or JSON — just the raw text content.";
-    
-    let filePart: GeminiFilePart;
-    if (env.STORAGE_EMULATOR_HOST) {
-      // Local dev: download and send as inline data
-      const data = await readFromGcsUri(fileUri);
-      filePart = { data, mimeType };
-    } else {
-      // Production: send file URI
-      filePart = { fileUri, mimeType };
-    }
+
+    // Always download and send as inline data.
+    // Developer API does not support gs:// URIs in fileData.fileUri —
+    // only Files API URIs (https://generativelanguage.googleapis.com/...) are accepted.
+    const data = await readFromGcsUri(fileUri);
+    const filePart: GeminiFilePart = { data, mimeType };
 
     const result = await callGemini(
       prompt,
@@ -220,6 +253,38 @@ export class A0A1WriteService {
           topicId: envelope.topicId,
           atomId,
           sourceInputId: inputId,
+          sourceBatchId:
+            typeof envelope.payload.batchId === "string" ? envelope.payload.batchId : undefined,
+          sourceThreadId:
+            typeof envelope.payload.threadId === "string" ? envelope.payload.threadId : undefined,
+          sourceChunkId:
+            typeof envelope.payload.chunkId === "string" ? envelope.payload.chunkId : undefined,
+          sourceMessageIds: Array.isArray(envelope.payload.messageIds)
+            ? envelope.payload.messageIds.filter((value): value is string => typeof value === "string")
+            : undefined,
+          sourceAssetRefs: Array.isArray(envelope.payload.assetRefs)
+            ? envelope.payload.assetRefs.filter((value): value is {
+                assetId: string;
+                messageId: string;
+                kind: string;
+                mimeType: string;
+                gcsUri: string;
+                downloadUrl?: string;
+                originalPath: string;
+              } => typeof value === "object" && value !== null)
+            : undefined,
+          sourceTimeRangeStart:
+            envelope.payload.timeRange &&
+            typeof envelope.payload.timeRange === "object" &&
+            typeof (envelope.payload.timeRange as { start?: unknown }).start === "string"
+              ? (envelope.payload.timeRange as { start: string }).start
+              : undefined,
+          sourceTimeRangeEnd:
+            envelope.payload.timeRange &&
+            typeof envelope.payload.timeRange === "object" &&
+            typeof (envelope.payload.timeRange as { end?: unknown }).end === "string"
+              ? (envelope.payload.timeRange as { end: string }).end
+              : undefined,
           claimIndex: index,
           title: atom.title,
           claim: atom.claim,

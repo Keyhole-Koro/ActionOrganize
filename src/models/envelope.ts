@@ -22,6 +22,10 @@ export const pubsubAttributesSchema = z.object({
   bundleId: z.string().min(1).optional(),
   draftVersion: z.string().min(1).optional(),
   outlineVersion: z.string().min(1).optional(),
+  batchId: z.string().min(1).optional(),
+  conversationId: z.string().min(1).optional(),
+  threadId: z.string().min(1).optional(),
+  chunkId: z.string().min(1).optional(),
 });
 
 export const pubsubPushMessageSchema = z.object({
