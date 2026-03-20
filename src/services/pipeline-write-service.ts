@@ -952,7 +952,7 @@ Return ONLY the JSON object.`;
 
   private buildHierarchyPlan(candidates: HierarchyCandidate[]): HierarchyPlan {
     const MIN_CLAIMS_FOR_CLUSTER = 2;
-    const MIN_CLAIMS_FOR_SUBCLUSTER = 1;
+    const MIN_CLAIMS_FOR_SUBCLUSTER = 2;
     const clusterMap = new Map<
       string,
       {
@@ -1029,6 +1029,13 @@ Return ONLY the JSON object.`;
         if (keptSubclusters.length === 1 && directClaims.length === 0) {
           directClaims.push(...keptSubclusters[0].claims);
           keptSubclusters.length = 0;
+        }
+
+        // Collapse cluster to root when no subclusters remain and total direct claims are too few
+        // to justify a cluster (each original subcluster had only 1 claim — no grouping value)
+        if (keptSubclusters.length === 0 && directClaims.length <= MIN_CLAIMS_FOR_CLUSTER) {
+          rootClaims.push(...directClaims);
+          return null;
         }
 
         return {
