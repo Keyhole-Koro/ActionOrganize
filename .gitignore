@@ -16,3 +16,5 @@ yarn-debug.log*
 
 # local env
 .env*.local
+
+*.pyc

@@ -5,6 +5,11 @@ import logging
 import os
 
 import discord
+from firestore_store import (
+    attach_guild_join_candidates,
+    index_message_structure,
+    resolve_workspace_binding,
+)
 from gcs_store import save_to_gcs
 from pubsub_publisher import publish_discord_message
 
@@ -20,11 +25,9 @@ def _require(name: str) -> str:
 
 
 TOKEN = _require("DISCORD_BOT_TOKEN")
-GUILD_IDS = {int(g) for g in _require("DISCORD_GUILD_IDS").split(",") if g.strip()}
 PROJECT_ID = _require("GOOGLE_CLOUD_PROJECT")
 GCS_BUCKET = _require("GCS_BUCKET")
-PUBSUB_TOPIC = os.environ.get("PUBSUB_DISCORD_TOPIC", "discord-message-received")
-WORKSPACE_ID = os.environ.get("WORKSPACE_ID", "default")
+PUBSUB_TOPIC = _require("PUBSUB_TOPIC_NAME")
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -33,17 +36,37 @@ client = discord.Client(intents=intents)
 
 @client.event
 async def on_ready() -> None:
-    log.info("Discord bot ready. user=%s guilds=%s", client.user, list(GUILD_IDS))
+    log.info("Discord bot ready. user=%s", client.user)
+
+
+@client.event
+async def on_guild_join(guild: discord.Guild) -> None:
+    try:
+        matched = attach_guild_join_candidates(guild)
+        log.info(
+            "guild join recorded guild_id=%s guild_name=%s pending_sessions=%s",
+            guild.id,
+            guild.name,
+            matched,
+        )
+    except Exception:
+        log.exception("Failed to record guild join guild_id=%s", guild.id)
 
 
 @client.event
 async def on_message(message: discord.Message) -> None:
     if message.author.bot:
         return
-    if message.guild is None or message.guild.id not in GUILD_IDS:
+    if message.guild is None:
         return
     if not message.content.strip():
         return
+
+    binding = resolve_workspace_binding(str(message.guild.id))
+    if binding is None:
+        log.info("ignoring guild without workspace binding guild_id=%s", message.guild.id)
+        return
+    workspace_id = binding["workspace_id"]
 
     channel = message.channel
     channel_id = None
@@ -56,11 +79,15 @@ async def on_message(message: discord.Message) -> None:
         channel_id = str(channel.id)
 
     try:
-        gcs_path = save_to_gcs(message, WORKSPACE_ID, GCS_BUCKET)
+        gcs_path = save_to_gcs(message, workspace_id, GCS_BUCKET)
+        index_message_structure(message, workspace_id)
         log.info(
-            "stored guild=%s channel=%s author=%s gcs=%s",
+            "stored workspace=%s guild_id=%s guild=%s channel_id=%s thread_id=%s author=%s gcs=%s",
+            workspace_id,
+            message.guild.id,
             message.guild.name,
-            getattr(channel, "name", channel.id),
+            channel_id,
+            thread_id,
             message.author,
             gcs_path,
         )
@@ -70,7 +97,7 @@ async def on_message(message: discord.Message) -> None:
 
     try:
         publish_discord_message(
-            workspace_id=WORKSPACE_ID,
+            workspace_id=workspace_id,
             project_id=PROJECT_ID,
             topic_name=PUBSUB_TOPIC,
             message_id=str(message.id),
