@@ -1,6 +1,6 @@
-import { EventProcessor } from "./src/services/event-processor.js";
-import { resolveRepositories } from "./src/repositories/index.js";
-import type { EventEnvelope } from "./src/models/envelope.js";
+import { EventProcessor } from "../src/services/event-processor.js";
+import { resolveRepositories } from "../src/repositories/index.js";
+import type { EventEnvelope } from "../src/models/envelope.js";
 
 async function main() {
   const processor = new EventProcessor();
