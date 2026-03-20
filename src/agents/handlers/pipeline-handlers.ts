@@ -3,6 +3,7 @@ import { logger } from "../../lib/logger.js";
 import { A0A1WriteService } from "../../services/a0-a1-write-service.js";
 import { A2DraftAppenderService } from "../../services/a2-draft-appender-service.js";
 import { A5BalancerService } from "../../services/a5-balancer-service.js";
+import { DiscordNodeService } from "../../services/discord-node-service.js";
 import { PipelineWriteService } from "../../services/pipeline-write-service.js";
 import { TopicResolverService } from "../../services/topic-resolver-service.js";
 import { organizeChunkJobSchema } from "../../models/organize-ingest-job.js";
@@ -50,6 +51,7 @@ const writeService = new A0A1WriteService();
 const draftAppenderService = new A2DraftAppenderService();
 const a5BalancerService = new A5BalancerService();
 const pipelineWriteService = new PipelineWriteService();
+const discordNodeService = new DiscordNodeService();
 const topicResolverService = new TopicResolverService();
 const organizeReviewRepository = new OrganizeReviewRepository();
 
@@ -535,6 +537,17 @@ class TopicMetricsUpdatedHandler implements AgentHandler {
   }
 }
 
+
+class DiscordMessageReceivedHandler implements AgentHandler {
+  readonly eventType = "discord.message.received";
+
+  async handle({ envelope }: AgentContext): Promise<AgentResult> {
+    const gcsPath = requireString(envelope.payload, "gcsPath");
+    await discordNodeService.processMessage(envelope.workspaceId, gcsPath);
+    return { ack: true, emittedEvents: [] };
+  }
+}
+
 export const pipelineHandlers: AgentHandler[] = [
   new OrganizeIngestReceivedHandler(),
   new MediaReceivedHandler(),
@@ -551,4 +564,5 @@ export const pipelineHandlers: AgentHandler[] = [
   new NodeRollupRequestedHandler(),
   new NodeRollupUpdatedHandler(),
   new TopicMetricsUpdatedHandler(),
+  new DiscordMessageReceivedHandler(),
 ];
